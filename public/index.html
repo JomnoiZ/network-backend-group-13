@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Go WebSocket Chat</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    #messages { height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+    .typing { color: #888; }
+  </style>
+</head>
+<body>
+  <h2>Go WebSocket Chat</h2>
+
+  <label>Your User ID: <input id="userId" /></label><br />
+  <label>Chat With (User ID or Group ID): <input id="targetId" /></label><br />
+  <label>Group Chat? <input type="checkbox" id="isGroup" /></label><br />
+  <button onclick="connect()">Connect</button>
+
+  <div id="status"></div>
+  <div id="messages"></div>
+  <input id="messageInput" placeholder="Type a message..." oninput="sendTyping()" />
+  <button onclick="sendMessage()">Send</button>
+
+  <script>
+    let socket;
+    let userId, targetId;
+    let typingTimeout;
+
+    function connect() {
+      userId = document.getElementById('userId').value.trim();
+      targetId = document.getElementById('targetId').value.trim();
+      const isGroup = document.getElementById('isGroup').checked;
+
+      if (!userId) return alert("Enter your user ID");
+
+      socket = new WebSocket(`ws://localhost:8080/ws?id=${userId}`);
+
+      socket.onopen = () => {
+        logStatus("Connected");
+        if (isGroup) {
+          socket.send(JSON.stringify({
+            type: "join_group",
+            sender_id: userId,
+            group_id: targetId
+          }));
+        }
+      };
+
+      socket.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        console.log("Received:", msg);
+
+        if (msg.type === "message") {
+          appendMessage(`[${msg.sender_id}] ${msg.content}`);
+        } else if (msg.type === "typing") {
+          showTyping(msg.sender_id, msg.status === "start");
+        } else if (msg.type === "status") {
+          appendMessage(`[STATUS] ${msg.sender_id} is ${msg.status}`);
+        } else {
+          alert("KUY");
+        }
+      };
+
+      socket.onclose = () => {
+        logStatus("Disconnected");
+      };
+    }
+
+    function sendMessage() {
+      const content = document.getElementById("messageInput").value;
+      if (!content) return;
+
+      const isGroup = document.getElementById('isGroup').checked;
+
+      socket.send(JSON.stringify({
+        type: "message",
+        sender_id: userId,
+        [isGroup ? "group_id" : "receiver_id"]: targetId,
+        content: content
+      }));
+
+      appendMessage(`[${userId}] ${content}`);
+
+      document.getElementById("messageInput").value = "";
+      sendTyping(true); // stop typing
+    }
+
+    function sendTyping(forceStop = false) {
+      clearTimeout(typingTimeout);
+
+      socket.send(JSON.stringify({
+        type: "typing",
+        sender_id: userId,
+        [document.getElementById('isGroup').checked ? "group_id" : "receiver_id"]: targetId,
+        status: "start"
+      }));
+
+      typingTimeout = setTimeout(() => {
+        socket.send(JSON.stringify({
+          type: "typing",
+          sender_id: userId,
+          [document.getElementById('isGroup').checked ? "group_id" : "receiver_id"]: targetId,
+          status: "stop"
+        }));
+      }, forceStop ? 0 : 1000);
+    }
+
+    function appendMessage(msg) {
+      const div = document.getElementById("messages");
+      div.innerHTML += `<div>${msg}</div>`;
+      div.scrollTop = div.scrollHeight;
+    }
+
+    function showTyping(user, isTyping) {
+      const typingEl = document.querySelector(`#typing-${user}`);
+      if (typingEl) typingEl.remove();
+      if (isTyping) {
+        const div = document.getElementById("messages");
+        const el = document.createElement("div");
+        el.id = `typing-${user}`;
+        el.className = "typing";
+        el.innerText = `${user} is typing...`;
+        div.appendChild(el);
+        div.scrollTop = div.scrollHeight;
+      }
+    }
+
+    function logStatus(msg) {
+      document.getElementById("status").innerText = msg;
+    }
+  </script>
+</body>
+</html>
