@@ -7,11 +7,8 @@ import (
 	"github.com/JomnoiZ/network-backend-group-13.git/services"
 )
 
-func WebsocketRoute(websockerService services.WebsocketService) {
-	websocketController := controllers.NewWebsocketController(websockerService)
+func WebsocketRoute(websocketService services.WebsocketService, corsMiddleware func(http.Handler) http.Handler) {
+	websocketController := controllers.NewWebsocketController(websocketService)
 
-	r := http.NewServeMux()
-	r.HandleFunc("/ws", websocketController.HandleWebSocket)
-
-	http.Handle("/ws", r)
+	http.Handle("/ws", corsMiddleware(http.HandlerFunc(websocketController.HandleWebSocket)))
 }
