@@ -17,6 +17,7 @@ type UserController interface {
     CreateUser(c *gin.Context)
     ListOnlineUsers(c *gin.Context)
     ListUserGroups(c *gin.Context)
+    GetDirectMessages(c *gin.Context)
 }
 
 func NewUserController(userService services.UserService) UserController {
@@ -70,4 +71,15 @@ func (c *userController) ListUserGroups(ctx *gin.Context) {
         return
     }
     ctx.JSON(http.StatusOK, groups)
+}
+
+func (c *userController) GetDirectMessages(ctx *gin.Context) {
+    userID := ctx.Param("user_id")
+    targetID := ctx.Param("target_id")
+    messages, err := c.userService.GetDirectMessages(userID, targetID)
+    if err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+    ctx.JSON(http.StatusOK, messages)
 }

@@ -15,5 +15,6 @@ func UserRoute(r *gin.Engine, userService services.UserService) {
         rgu.POST("/", userController.CreateUser)
         rgu.GET("/online", userController.ListOnlineUsers)
         rgu.GET("/:id/groups", userController.ListUserGroups)
+        rgu.GET("/users/:user_id/messages/:target_id", userController.GetDirectMessages)
     }
 }

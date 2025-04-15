@@ -17,4 +17,6 @@ type GroupRepository interface {
 
 type MessageRepository interface {
     SaveMessage(message *models.MessageDB) error
+    GetGroupMessages(groupID string) ([]*models.MessageDB, error)
+    GetDirectMessages(userID, targetID string) ([]*models.MessageDB, error)
 }
