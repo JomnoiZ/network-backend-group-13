@@ -7,11 +7,16 @@ import (
 )
 
 func GroupRoute(r *gin.Engine, groupService services.GroupService) {
-	groupController := controllers.NewGroupController(groupService)
+    groupController := controllers.NewGroupController(groupService)
 
-	rgu := r.Group("/groups")
-	{
-		rgu.GET("/:id", groupController.GetGroup)
-		rgu.POST("/:id", groupController.CreateGroup)
-	}
+    rgu := r.Group("/groups")
+    {
+        rgu.GET("/:id", groupController.GetGroup)
+        rgu.POST("/", groupController.CreateGroup)
+        rgu.POST("/:id/members", groupController.AddMember)
+        rgu.DELETE("/:id/members/:user_id", groupController.KickMember)
+        rgu.PUT("/:id/admins/:user_id", groupController.AddAdmin)
+        rgu.DELETE("/:id/admins/:user_id", groupController.RemoveAdmin)
+        rgu.GET("/:id/messages", groupController.GetMessages)
+    }
 }

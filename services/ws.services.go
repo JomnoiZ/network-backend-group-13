@@ -11,25 +11,33 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type websocketService struct {
-	messageRepository database.MessageRepository
-	Clients           map[string]map[*models.Client]bool
-	Groups            map[string]map[string]bool
-	Mutex             sync.RWMutex
-}
+const (
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingPeriod     = (pongWait * 9) / 10
+	maxMessageSize = 10000
+)
 
 type WebsocketService interface {
 	HandleConnection(userID string, conn *websocket.Conn)
-	RegisterClient(c *models.Client)
-	UnregisterClient(c *models.Client)
-	BroadcastStatus(userID string, status string)
-	HandleMessage(sender *models.Client, msg *models.Message)
+	GetClients() map[string]*models.Client
+	AddToGroup(client *models.Client, groupID string)
+	KickFromGroup(userID string, groupID string)
+	NotifyGroupUpdate(groupID string, updateType string, data interface{})
 }
 
-func NewWebsocketService() WebsocketService {
+type websocketService struct {
+	clients     map[string]*models.Client
+	groups      map[string]map[string]*models.Client
+	mutex       sync.RWMutex
+	messageRepo database.MessageRepository
+}
+
+func NewWebsocketService(messageRepo database.MessageRepository) WebsocketService {
 	return &websocketService{
-		Clients: make(map[string]map[*models.Client]bool),
-		Groups:  make(map[string]map[string]bool),
+		clients:     make(map[string]*models.Client),
+		groups:      make(map[string]map[string]*models.Client),
+		messageRepo: messageRepo,
 	}
 }
 
@@ -37,224 +45,319 @@ func (s *websocketService) HandleConnection(userID string, conn *websocket.Conn)
 	client := &models.Client{
 		ID:     userID,
 		Conn:   conn,
-		Send:   make(chan []byte, 10),
+		Send:   make(chan []byte, 256),
 		Groups: make(map[string]bool),
 	}
 
-	s.RegisterClient(client)
+	s.mutex.Lock()
+	s.clients[userID] = client
+	s.mutex.Unlock()
 
-	go s.readMessages(client)
-	go s.writeMessages(client)
+	go s.writePump(client)
+	go s.readPump(client)
 
-	s.BroadcastStatus(userID, "online")
+	s.broadcastStatus(userID, "online")
 }
 
-func (s *websocketService) RegisterClient(client *models.Client) {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
+func (s *websocketService) GetClients() map[string]*models.Client {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.clients
+}
 
-	if s.Clients[client.ID] == nil {
-		s.Clients[client.ID] = make(map[*models.Client]bool)
+func (s *websocketService) AddToGroup(client *models.Client, groupID string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if s.groups[groupID] == nil {
+		s.groups[groupID] = make(map[string]*models.Client)
 	}
-	s.Clients[client.ID][client] = true
 
-	log.Printf("Client %s connected (%d connections)", client.ID, len(s.Clients[client.ID]))
+	if actualClient, exists := s.clients[client.ID]; exists {
+		s.groups[groupID][client.ID] = actualClient
+		actualClient.Groups[groupID] = true
+	} else {
+		s.groups[groupID][client.ID] = client
+		client.Groups[groupID] = true
+	}
 }
 
-func (s *websocketService) UnregisterClient(client *models.Client) {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
+func (s *websocketService) KickFromGroup(userID string, groupID string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
-	conns, ok := s.Clients[client.ID]
-	if !ok {
+	if s.groups[groupID] != nil {
+		delete(s.groups[groupID], userID)
+	}
+
+	if client, exists := s.clients[userID]; exists {
+		delete(client.Groups, groupID)
+	}
+}
+
+func (s *websocketService) NotifyGroupUpdate(groupID string, updateType string, data interface{}) {
+	message := models.Message{
+		Type:    "group_update",
+		GroupID: groupID,
+		Data: map[string]interface{}{
+			"type": updateType,
+			"data": data,
+		},
+	}	
+	
+	messageJSON, err := json.Marshal(message)
+	if err != nil {
+		log.Println("Failed to marshal group update:", err)
 		return
 	}
 
-	delete(conns, client)
-	client.Conn.Close()
-	close(client.Send)
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
-	if len(conns) == 0 {
-		delete(s.Clients, client.ID)
-		log.Printf("Client %s disconnected (last connection)", client.ID)
-	} else {
-		log.Printf("Client %s disconnected (remaining %d connections)", client.ID, len(conns))
-	}
-
-	// Remove from groups
-	for gid := range client.Groups {
-		delete(s.Groups[gid], client.ID)
-	}
-}
-
-func (s *websocketService) BroadcastStatus(userID string, status string) {
-	msg := models.Message{
-		Type:     "status",
-		SenderID: userID,
-		Status:   status,
-	}
-	data, _ := json.Marshal(msg)
-
-	s.Mutex.RLock()
-	defer s.Mutex.RUnlock()
-
-	for id, conns := range s.Clients {
-		if id == userID {
-			continue
-		}
-
-		for client := range conns {
+	if groupClients, exists := s.groups[groupID]; exists {
+		for _, client := range groupClients {
 			select {
-			case client.Send <- data:
+			case client.Send <- messageJSON:
 			default:
-				log.Printf("Warning: Client %s send channel full or closed", client.ID)
+				close(client.Send)
+				delete(s.clients, client.ID)
+				for gid := range s.groups {
+					delete(s.groups[gid], client.ID)
+				}
 			}
 		}
 	}
 }
 
-func (s *websocketService) HandleMessage(sender *models.Client, msg *models.Message) {
-	switch msg.Type {
-	case "message":
-		s.sendMessage(sender.ID, msg)
-	case "typing":
-		s.sendTyping(sender.ID, msg)
-	case "join_group":
-		s.addToGroup(sender, msg.GroupID)
+func (s *websocketService) broadcastStatus(userID string, status string) {
+	message := models.Message{
+		Type:     "status",
+		SenderID: userID,
+		Status:   status,
+	}
+
+	messageJSON, err := json.Marshal(message)
+	if err != nil {
+		log.Println("Failed to marshal status message:", err)
+		return
+	}
+
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for _, client := range s.clients {
+		if client.ID != userID {
+			select {
+			case client.Send <- messageJSON:
+			default:
+				close(client.Send)
+				delete(s.clients, client.ID)
+				for groupID := range s.groups {
+					delete(s.groups[groupID], client.ID)
+				}
+			}
+		}
 	}
 }
 
-func (s *websocketService) sendMessage(senderID string, msg *models.Message) {
-	data, _ := json.Marshal(msg)
+func (s *websocketService) readPump(client *models.Client) {
+	defer func() {
+		s.mutex.Lock()
+		if _, ok := s.clients[client.ID]; ok {
+			delete(s.clients, client.ID)
+			for groupID := range s.groups {
+				delete(s.groups[groupID], client.ID)
+			}
+		}
+		s.mutex.Unlock()
+		client.Conn.Close()
+		s.broadcastStatus(client.ID, "offline")
+	}()
+
+	client.Conn.SetReadLimit(maxMessageSize)
+	client.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	client.Conn.SetPongHandler(func(string) error {
+		client.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	for {
+		_, message, err := client.Conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("Read error for user %s: %v", client.ID, err)
+			}
+			break
+		}
+
+		var msg models.Message
+		if err := json.Unmarshal(message, &msg); err != nil {
+			log.Println("Failed to unmarshal message:", err)
+			continue
+		}
+
+		msg.SenderID = client.ID
+
+		switch msg.Type {
+		case "message":
+			s.handleChatMessage(&msg)
+		case "typing":
+			s.handleTypingStatus(&msg)
+		case "join_group":
+			if msg.GroupID != "" {
+				s.AddToGroup(client, msg.GroupID)
+				log.Printf("User %s joined group %s", client.ID, msg.GroupID)
+			}
+		}
+	}
+}
+
+func (s *websocketService) writePump(client *models.Client) {
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		client.Conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-client.Send:
+			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+
+			w, err := client.Conn.NextWriter(websocket.TextMessage)
+			if err != nil {
+				return
+			}
+			w.Write(message)
+
+			n := len(client.Send)
+			for i := 0; i < n; i++ {
+				w.Write([]byte{'\n'})
+				w.Write(<-client.Send)
+			}
+
+			if err := w.Close(); err != nil {
+				return
+			}
+		case <-ticker.C:
+			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := client.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (s *websocketService) handleChatMessage(msg *models.Message) {
+	messageJSON, err := json.Marshal(msg)
+	if err != nil {
+		log.Println("Failed to marshal message:", err)
+		return
+	}
+
+	if msg.GroupID != "" || msg.ReceiverID != "" {
+		dbMsg := &models.MessageDB{
+			ID:         msg.ID,
+			SenderID:   msg.SenderID,
+			ReceiverID: msg.ReceiverID,
+			GroupID:    msg.GroupID,
+			Content:    msg.Content,
+		}
+		if err := s.messageRepo.SaveMessage(dbMsg); err != nil {
+			log.Println("Failed to save message to database:", err)
+		}
+	}
+
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
 	if msg.GroupID != "" {
-		s.Mutex.RLock()
-		defer s.Mutex.RUnlock()
+		if groupClients, exists := s.groups[msg.GroupID]; exists {
+			for _, client := range groupClients {
+				select {
+				case client.Send <- messageJSON:
+				default:
+					close(client.Send)
+					delete(s.clients, client.ID)
+					for gid := range s.groups {
+						delete(s.groups[gid], client.ID)
+					}
+				}
+			}
+		}
+		return
+	}
 
-		for memberID := range s.Groups[msg.GroupID] {
-			if conns, ok := s.Clients[memberID]; ok {
-				for client := range conns {
-					if memberID != senderID || msg.Type == "typing" {
-						select {
-						case client.Send <- data:
-						default:
-							log.Printf("Warning: Send buffer full for group member %s", memberID)
+	if msg.ReceiverID != "" {
+		if client, exists := s.clients[msg.ReceiverID]; exists {
+			select {
+			case client.Send <- messageJSON:
+			default:
+				close(client.Send)
+				delete(s.clients, client.ID)
+				for gid := range s.groups {
+					delete(s.groups[gid], client.ID)
+				}
+			}
+		}
+
+		if sender, exists := s.clients[msg.SenderID]; exists && sender.ID != msg.ReceiverID {
+			select {
+			case sender.Send <- messageJSON:
+			default:
+				close(sender.Send)
+				delete(s.clients, sender.ID)
+				for gid := range s.groups {
+					delete(s.groups[gid], sender.ID)
+				}
+			}
+		}
+	}
+}
+
+func (s *websocketService) handleTypingStatus(msg *models.Message) {
+	messageJSON, err := json.Marshal(msg)
+	if err != nil {
+		log.Println("Failed to marshal typing status:", err)
+		return
+	}
+
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	if msg.GroupID != "" {
+		if groupClients, exists := s.groups[msg.GroupID]; exists {
+			for _, client := range groupClients {
+				if client.ID != msg.SenderID {
+					select {
+					case client.Send <- messageJSON:
+					default:
+						close(client.Send)
+						delete(s.clients, client.ID)
+						for gid := range s.groups {
+							delete(s.groups[gid], client.ID)
 						}
 					}
 				}
 			}
 		}
-	} else if msg.ReceiverID != "" {
-		s.sendToUser(msg.ReceiverID, data)
+		return
 	}
 
-	// go s.messageRepository.SaveMessage(&models.MessageDB{
-	// 	SenderID:   msg.SenderID,
-	// 	ReceiverID: msg.ReceiverID,
-	// 	GroupID:    msg.GroupID,
-	// 	Content:    msg.Content,
-	// })
-}
-
-func (s *websocketService) sendTyping(senderID string, msg *models.Message) {
-	data, _ := json.Marshal(msg)
-
-	if msg.GroupID != "" {
-		s.Mutex.RLock()
-		defer s.Mutex.RUnlock()
-
-		for memberID := range s.Groups[msg.GroupID] {
-			if memberID == senderID {
-				continue
-			}
-			for client := range s.Clients[memberID] {
-				select {
-				case client.Send <- data:
-				default:
-					log.Printf("Typing: buffer full for %s", memberID)
+	if msg.ReceiverID != "" && msg.ReceiverID != msg.SenderID {
+		if client, exists := s.clients[msg.ReceiverID]; exists {
+			select {
+			case client.Send <- messageJSON:
+			default:
+				close(client.Send)
+				delete(s.clients, client.ID)
+				for gid := range s.groups {
+					delete(s.groups[gid], client.ID)
 				}
-			}
-		}
-	} else if msg.ReceiverID != "" {
-		s.sendToUser(msg.ReceiverID, data)
-	}
-}
-
-func (s *websocketService) sendToUser(userID string, data []byte) {
-	s.Mutex.RLock()
-	defer s.Mutex.RUnlock()
-
-	for client := range s.Clients[userID] {
-		select {
-		case client.Send <- data:
-		default:
-			log.Printf("Send buffer full or closed for user %s", userID)
-		}
-	}
-}
-
-func (s *websocketService) addToGroup(client *models.Client, groupID string) {
-	s.Mutex.Lock()
-	defer s.Mutex.Unlock()
-
-	if s.Groups[groupID] == nil {
-		s.Groups[groupID] = make(map[string]bool)
-	}
-
-	s.Groups[groupID][client.ID] = true
-	client.Groups[groupID] = true
-}
-
-func (s *websocketService) readMessages(client *models.Client) {
-	defer func() {
-		s.BroadcastStatus(client.ID, "offline")
-		s.UnregisterClient(client)
-	}()
-
-	client.Conn.SetReadLimit(512)
-	client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	client.Conn.SetPongHandler(func(string) error {
-		client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
-
-	for {
-		_, msg, err := client.Conn.ReadMessage()
-		if err != nil {
-			log.Printf("Read error (%s): %v", client.ID, err)
-			break
-		}
-
-		var message models.Message
-		if err := json.Unmarshal(msg, &message); err != nil {
-			log.Println("Invalid JSON:", err)
-			continue
-		}
-
-		s.HandleMessage(client, &message)
-	}
-}
-
-func (s *websocketService) writeMessages(client *models.Client) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case msg, ok := <-client.Send:
-			if !ok {
-				return
-			}
-			err := client.Conn.WriteMessage(websocket.TextMessage, msg)
-			if err != nil {
-				log.Printf("Write error (%s): %v", client.ID, err)
-				return
-			}
-		case <-ticker.C:
-			err := client.Conn.WriteMessage(websocket.PingMessage, nil)
-			if err != nil {
-				log.Printf("Ping error (%s): %v", client.ID, err)
-				return
 			}
 		}
 	}

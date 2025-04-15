@@ -6,38 +6,57 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/JomnoiZ/network-backend-group-13.git/models"
+	"google.golang.org/api/iterator"
 )
 
-type userRepository struct {
-	firestoreClient *firestore.Client
+type firestoreUserRepository struct {
+    client *firestore.Client
 }
 
-type UserRepository interface {
-	GetUser(userID string) (*models.User, error)
-	CreateUser(user *models.User) (*models.User, error)
+func NewFirestoreUserRepository(client *firestore.Client) UserRepository {
+    return &firestoreUserRepository{client: client}
 }
 
-func NewUserRepository(firestoreClient *firestore.Client) UserRepository {
-	return &userRepository{
-		firestoreClient: firestoreClient,
-	}
+func (r *firestoreUserRepository) GetUser(userID string) (*models.User, error) {
+    ctx := context.Background()
+    doc, err := r.client.Collection("users").Doc(userID).Get(ctx)
+    if err != nil {
+        return nil, err
+    }
+    var user models.User
+    if err := doc.DataTo(&user); err != nil {
+        return nil, err
+    }
+    return &user, nil
 }
 
-func (r *userRepository) GetUser(userID string) (*models.User, error) {
-	doc, err := r.firestoreClient.Collection("users").Doc(userID).Get(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	var user models.User
-	doc.DataTo(&user)
-	return &user, nil
+func (r *firestoreUserRepository) CreateUser(user *models.User) (*models.User, error) {
+    ctx := context.Background()
+    user.CreatedAt = time.Now()
+    _, err := r.client.Collection("users").Doc(user.ID).Set(ctx, user)
+    if err != nil {
+        return nil, err
+    }
+    return user, nil
 }
 
-func (r *userRepository) CreateUser(user *models.User) (*models.User, error) {
-	user.CreatedAt = time.Now()
-	_, err := r.firestoreClient.Collection("users").Doc(user.ID).Set(context.Background(), user)
-	if err != nil {
-		return nil, err
-	}
-	return user, err
+func (r *firestoreUserRepository) GetUserGroups(userID string) ([]*models.Group, error) {
+    ctx := context.Background()
+    iter := r.client.Collection("groups").Where("members", "array-contains", userID).Documents(ctx)
+    groups := []*models.Group{}
+    for {
+        doc, err := iter.Next()
+        if err == iterator.Done {
+            break
+        }
+        if err != nil {
+            return nil, err
+        }
+        var group models.Group
+        if err := doc.DataTo(&group); err != nil {
+            return nil, err
+        }
+        groups = append(groups, &group)
+    }
+    return groups, nil
 }

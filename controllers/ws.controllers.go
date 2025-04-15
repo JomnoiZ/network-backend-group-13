@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/JomnoiZ/network-backend-group-13.git/services"
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
@@ -13,7 +14,7 @@ type websocketController struct {
 }
 
 type WebsocketController interface {
-	HandleWebSocket(w http.ResponseWriter, r *http.Request)
+	HandleWebSocket(c *gin.Context)
 }
 
 func NewWebsocketController(websocketService services.WebsocketService) WebsocketController {
@@ -22,20 +23,23 @@ func NewWebsocketController(websocketService services.WebsocketService) Websocke
 	}
 }
 
-func (c *websocketController) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("id")
+func (c *websocketController) HandleWebSocket(ctx *gin.Context) {
+	userID := ctx.Query("id")
 	if userID == "" {
-		http.Error(w, "Missing user ID", http.StatusBadRequest)
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Missing user ID"})
 		return
 	}
 
 	var upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
 	if err != nil {
-		log.Println("Upgrade error:", err)
+		log.Printf("WebSocket upgrade error for user %s: %v", userID, err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to establish WebSocket connection"})
 		return
 	}
 
