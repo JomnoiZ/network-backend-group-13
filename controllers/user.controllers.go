@@ -74,7 +74,7 @@ func (c *userController) ListUserGroups(ctx *gin.Context) {
 }
 
 func (c *userController) GetDirectMessages(ctx *gin.Context) {
-    userID := ctx.Param("user_id")
+    userID := ctx.Param("id")
     targetID := ctx.Param("target_id")
     messages, err := c.userService.GetDirectMessages(userID, targetID)
     if err != nil {

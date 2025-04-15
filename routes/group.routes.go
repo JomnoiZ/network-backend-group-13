@@ -17,6 +17,6 @@ func GroupRoute(r *gin.Engine, groupService services.GroupService) {
         rgu.DELETE("/:id/members/:user_id", groupController.KickMember)
         rgu.PUT("/:id/admins/:user_id", groupController.AddAdmin)
         rgu.DELETE("/:id/admins/:user_id", groupController.RemoveAdmin)
-        rgu.GET("/:id/messages", groupController.GetMessages)
+        rgu.GET("/:id/messages", groupController.GetGroupMessages)
     }
 }

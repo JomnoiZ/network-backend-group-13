@@ -1,402 +1,536 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Go WebSocket Chat</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 20px; max-width: 1000px; margin: 0 auto; }
-    #container { display: flex; gap: 20px; }
-    #sidebar { width: 250px; }
-    #main { flex-grow: 1; }
-    #messages { height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
-    .typing { color: #888; font-style: italic; }
-    .status { color: #555; }
-    .error { color: red; }
-    .group-update { color: green; }
-    #online-users, #groups { margin-bottom: 15px; }
-    .user-item, .group-item { margin: 5px 0; }
-    .user-item button, .group-item button { margin-left: 10px; font-size: 12px; }
-    input, button { margin: 5px 0; }
-    #group-management { margin-top: 10px; }
-  </style>
-</head>
-<body>
-  <h2>Go WebSocket Chat</h2>
-  <div id="container">
-    <div id="sidebar">
-      <h3>User Setup</h3>
-      <label>Your User ID: <input id="userId" placeholder="e.g., user1" /></label><br />
-      <label>Username: <input id="username" placeholder="e.g., Alice" /></label><br />
-      <button onclick="registerUser()">Register</button>
-      <button onclick="connect()">Connect</button>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Go WebSocket Chat</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+        max-width: 1000px;
+        margin: 0 auto;
+      }
+      #container {
+        display: flex;
+        gap: 20px;
+      }
+      #sidebar {
+        width: 250px;
+      }
+      #main {
+        flex-grow: 1;
+      }
+      #messages {
+        height: 300px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        padding: 10px;
+        margin-bottom: 10px;
+      }
+      .typing {
+        color: #888;
+        font-style: italic;
+      }
+      .status {
+        color: #555;
+      }
+      .error {
+        color: red;
+      }
+      .group-update {
+        color: green;
+      }
+      #online-users,
+      #groups {
+        margin-bottom: 15px;
+      }
+      .user-item,
+      .group-item {
+        margin: 5px 0;
+      }
+      .user-item button,
+      .group-item button {
+        margin-left: 10px;
+        font-size: 12px;
+      }
+      input,
+      button {
+        margin: 5px 0;
+      }
+      #group-management {
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Go WebSocket Chat</h2>
+    <div id="container">
+      <div id="sidebar">
+        <h3>User Setup</h3>
+        <label
+          >Your User ID: <input id="userId" placeholder="e.g., user1" /></label
+        ><br />
+        <label
+          >Username: <input id="username" placeholder="e.g., Alice" /></label
+        ><br />
+        <button onclick="registerUser()">Register</button>
+        <button onclick="connect()">Connect</button>
 
-      <h3>Online Users</h3>
-      <div id="online-users"></div>
+        <h3>Online Users</h3>
+        <div id="online-users"></div>
 
-      <h3>Your Groups</h3>
-      <div id="groups"></div>
+        <h3>Your Groups</h3>
+        <div id="groups"></div>
 
-      <h3>Create Group</h3>
-      <label>Group Name: <input id="groupName" placeholder="e.g., Friends" /></label><br />
-      <button onclick="createGroup()">Create Group</button>
-    </div>
-    <div id="main">
-      <h3>Chat</h3>
-      <label>Chat With (User/Group ID): <input id="targetId" placeholder="e.g., user2 or group1" /></label>
-      <label>Group Chat? <input type="checkbox" id="isGroup" /></label><br />
-      <div id="group-management" style="display: none;">
-        <h4>Group Management</h4>
-        <label>Add Member: <input id="addMemberId" placeholder="User ID" /></label>
-        <button onclick="addMember()">Add</button><br />
-        <label>Group Members:</label>
-        <div id="group-members"></div>
+        <h3>Create Group</h3>
+        <label
+          >Group Name:
+          <input id="groupName" placeholder="e.g., Friends" /></label
+        ><br />
+        <button onclick="createGroup()">Create Group</button>
       </div>
-      <div id="status"></div>
-      <div id="messages"></div>
-      <input id="messageInput" placeholder="Type a message..." oninput="sendTyping()" />
-      <button onclick="sendMessage()">Send</button>
+      <div id="main">
+        <h3>Chat</h3>
+        <label
+          >Chat With (User/Group ID):
+          <input id="targetId" placeholder="e.g., user2 or group1"
+        /></label>
+        <label>Group Chat? <input type="checkbox" id="isGroup" /></label><br />
+        <div id="group-management" style="display: none">
+          <h4>Group Management</h4>
+          <label
+            >Add Member: <input id="addMemberId" placeholder="User ID"
+          /></label>
+          <button onclick="addMember()">Add</button><br />
+          <label>Group Members:</label>
+          <div id="group-members"></div>
+        </div>
+        <div id="status"></div>
+        <div id="messages"></div>
+        <input
+          id="messageInput"
+          placeholder="Type a message..."
+          oninput="sendTyping()"
+        />
+        <button onclick="sendMessage()">Send</button>
+      </div>
     </div>
-  </div>
 
-  <script>
-    let socket;
-    let userId, username, targetId;
-    let typingTimeout;
-    let currentGroup = null;
+    <script>
+      let socket;
+      let userId, username, targetId;
+      let typingTimeout;
+      let currentGroup = null;
 
-    async function registerUser() {
-      userId = document.getElementById('userId').value.trim();
-      username = document.getElementById('username').value.trim();
-      if (!userId || !username) return alert("Enter user ID and username");
+      async function registerUser() {
+        userId = document.getElementById("userId").value.trim();
+        username = document.getElementById("username").value.trim();
+        if (!userId || !username) return alert("Enter user ID and username");
 
-      try {
-        const res = await fetch('http://localhost:8080/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: userId, username })
-        });
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed to register');
-        logStatus('Registered successfully');
-        updateGroups();
-      } catch (err) {
-        logStatus(`Error: ${err.message}`, true);
-      }
-    }
-
-    async function connect() {
-      userId = document.getElementById('userId').value.trim();
-      if (!userId) return alert("Enter your user ID");
-
-      socket = new WebSocket(`ws://localhost:8080/ws?id=${userId}`);
-
-      socket.onopen = () => {
-        logStatus("Connected");
-        updateOnlineUsers();
-        updateGroups();
-      };
-
-      socket.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        console.log("Received:", msg);
-
-        if (msg.type === "message") {
-          appendMessage(`[${msg.sender_id}] ${msg.content}`);
-        } else if (msg.type === "typing") {
-          showTyping(msg.sender_id, msg.status === "start");
-        } else if (msg.type === "status") {
-          appendMessage(`[STATUS] ${msg.sender_id} is ${msg.status}`, 'status');
-          updateOnlineUsers();
-        } else if (msg.type === "group_update") {
-          const { type, data } = msg.data;
-          appendMessage(`[GROUP] ${type}: ${JSON.stringify(data)}`, 'group-update');
-          if (msg.group_id === currentGroup) {
-            updateGroupMembers();
-          }
+        try {
+          const res = await fetch("http://localhost:8080/users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: userId, username }),
+          });
+          if (!res.ok)
+            throw new Error((await res.json()).error || "Failed to register");
+          logStatus("Registered successfully");
           updateGroups();
+        } catch (err) {
+          logStatus(`Error: ${err.message}`, true);
         }
-      };
-
-      socket.onclose = () => {
-        logStatus("Disconnected");
-        document.getElementById('group-management').style.display = 'none';
-      };
-    }
-
-    async function createGroup() {
-      const groupName = document.getElementById('groupName').value.trim();
-      if (!groupName || !userId) return alert("Enter group name and ensure you're registered");
-
-      try {
-        const res = await fetch('http://localhost:8080/groups', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: groupName, owner_id: userId })
-        });
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed to create group');
-        const group = await res.json();
-        appendMessage(`[GROUP] Created group ${group.name} (${group.id})`, 'group-update');
-        updateGroups();
-      } catch (err) {
-        logStatus(`Error: ${err.message}`, true);
       }
-    }
 
-    async function updateOnlineUsers() {
-      try {
-        const res = await fetch('http://localhost:8080/users/online');
-        const users = await res.json();
-        const el = document.getElementById('online-users');
-        el.innerHTML = users.map(u => `
+      async function connect() {
+        userId = document.getElementById("userId").value.trim();
+        if (!userId) return alert("Enter your user ID");
+
+        socket = new WebSocket(`ws://localhost:8080/ws?id=${userId}`);
+
+        socket.onopen = () => {
+          logStatus("Connected");
+          updateOnlineUsers();
+          updateGroups();
+        };
+
+        socket.onmessage = (event) => {
+          const msg = JSON.parse(event.data);
+          console.log("Received:", msg);
+
+          if (msg.type === "message") {
+            appendMessage(`[${msg.sender_id}] ${msg.content}`);
+          } else if (msg.type === "typing") {
+            showTyping(msg.sender_id, msg.status === "start");
+          } else if (msg.type === "status") {
+            appendMessage(
+              `[STATUS] ${msg.sender_id} is ${msg.status}`,
+              "status"
+            );
+            updateOnlineUsers();
+          } else if (msg.type === "group_update") {
+            const { type, data } = msg.data;
+            appendMessage(
+              `[GROUP] ${type}: ${JSON.stringify(data)}`,
+              "group-update"
+            );
+            if (msg.group_id === currentGroup) {
+              updateGroupMembers();
+            }
+            updateGroups();
+          }
+        };
+
+        socket.onclose = () => {
+          logStatus("Disconnected");
+          document.getElementById("group-management").style.display = "none";
+        };
+      }
+
+      async function createGroup() {
+        const groupName = document.getElementById("groupName").value.trim();
+        if (!groupName || !userId)
+          return alert("Enter group name and ensure you're registered");
+
+        try {
+          const res = await fetch("http://localhost:8080/groups", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: groupName, owner_id: userId }),
+          });
+          if (!res.ok)
+            throw new Error(
+              (await res.json()).error || "Failed to create group"
+            );
+          const group = await res.json();
+          appendMessage(
+            `[GROUP] Created group ${group.name} (${group.id})`,
+            "group-update"
+          );
+          updateGroups();
+        } catch (err) {
+          logStatus(`Error: ${err.message}`, true);
+        }
+      }
+
+      async function updateOnlineUsers() {
+        try {
+          const res = await fetch("http://localhost:8080/users/online");
+          const users = await res.json();
+          const el = document.getElementById("online-users");
+          el.innerHTML = users
+            .map(
+              (u) => `
           <div class="user-item">
             ${u.username} (${u.id})
             <button onclick="startChat('${u.id}', false)">Chat</button>
           </div>
-        `).join('');
-      } catch (err) {
-        logStatus(`Error fetching online users: ${err.message}`, true);
+        `
+            )
+            .join("");
+        } catch (err) {
+          logStatus(`Error fetching online users: ${err.message}`, true);
+        }
       }
-    }
 
-    async function updateGroups() {
-      if (!userId) return;
-      try {
-        const res = await fetch(`http://localhost:8080/users/${userId}/groups`);
-        const groups = await res.json();
-        const el = document.getElementById('groups');
-        el.innerHTML = groups.map(g => `
+      async function updateGroups() {
+        if (!userId) return;
+        try {
+          const res = await fetch(
+            `http://localhost:8080/users/${userId}/groups`
+          );
+          const groups = await res.json();
+          const el = document.getElementById("groups");
+          el.innerHTML = groups
+            .map(
+              (g) => `
           <div class="group-item">
             ${g.name} (${g.id})
             <button onclick="joinGroup('${g.id}')">Chat</button>
           </div>
-        `).join('');
-      } catch (err) {
-        logStatus(`Error fetching groups: ${err.message}`, true);
+        `
+            )
+            .join("");
+        } catch (err) {
+          logStatus(`Error fetching groups: ${err.message}`, true);
+        }
       }
-    }
 
-    async function joinGroup(groupId) {
-      currentGroup = groupId;
-      document.getElementById('targetId').value = groupId;
-      document.getElementById('isGroup').checked = true;
-      document.getElementById('group-management').style.display = 'block';
-      socket.send(JSON.stringify({
-        type: "join_group",
-        sender_id: userId,
-        group_id: groupId
-      }));
-      appendMessage(`[GROUP] Joined group ${groupId}`, 'group-update');
-      await updateGroupMembers();
-      await loadMessageHistory(groupId, true);
-    }
+      async function joinGroup(groupId) {
+        currentGroup = groupId;
+        document.getElementById("targetId").value = groupId;
+        document.getElementById("isGroup").checked = true;
+        document.getElementById("group-management").style.display = "block";
+        socket.send(
+          JSON.stringify({
+            type: "join_group",
+            sender_id: userId,
+            group_id: groupId,
+          })
+        );
+        appendMessage(`[GROUP] Joined group ${groupId}`, "group-update");
+        await updateGroupMembers();
+        await loadMessageHistory(groupId, true);
+      }
 
-    async function updateGroupMembers() {
-      if (!currentGroup) return;
-      try {
-        const res = await fetch(`http://localhost:8080/groups/${currentGroup}`);
-        const group = await res.json();
-        const isOwner = group.owner_id === userId;
-        const isAdmin = group.admins.includes(userId);
+      async function updateGroupMembers() {
+        if (!currentGroup) return;
+        try {
+          const res = await fetch(
+            `http://localhost:8080/groups/${currentGroup}`
+          );
+          const group = await res.json();
+          const isOwner = group.owner_id === userId;
+          const isAdmin = group.admins.includes(userId);
 
-        const memberDetails = await Promise.all(
-          group.members.map(async (memberId) => {
-            try {
-              const userRes = await fetch(`http://localhost:8080/users/${memberId}`);
-              if (!userRes.ok) return { id: memberId, username: memberId };
-              const user = await userRes.json();
-              return { id: memberId, username: user.username || memberId };
-            } catch {
-              return { id: memberId, username: memberId };
+          const memberDetails = await Promise.all(
+            group.members.map(async (memberId) => {
+              try {
+                const userRes = await fetch(
+                  `http://localhost:8080/users/${memberId}`
+                );
+                if (!userRes.ok) return { id: memberId, username: memberId };
+                const user = await userRes.json();
+                return { id: memberId, username: user.username || memberId };
+              } catch {
+                return { id: memberId, username: memberId };
+              }
+            })
+          );
+
+          const el = document.getElementById("group-members");
+          el.innerHTML = memberDetails
+            .map(
+              (member) => `
+          <div class="user-item">
+            ${member.username} (${member.id})
+            ${group.admins.includes(member.id) ? " (Admin)" : ""}
+            ${member.id === group.owner_id ? " (Owner)" : ""}
+            ${
+              isOwner || isAdmin
+                ? `
+              <button onclick="kickMember('${member.id}')">Kick</button>
+            `
+                : ""
             }
+            ${
+              isOwner && member.id !== userId
+                ? `
+              ${
+                group.admins.includes(member.id)
+                  ? `<button onclick="removeAdmin('${member.id}')">Remove Admin</button>`
+                  : `<button onclick="addAdmin('${member.id}')">Make Admin</button>`
+              }
+            `
+                : ""
+            }
+          </div>
+        `
+            )
+            .join("");
+        } catch (err) {
+          logStatus(`Error fetching group members: ${err.message}`, true);
+        }
+      }
+
+      async function addMember() {
+        const memberId = document.getElementById("addMemberId").value.trim();
+        if (!currentGroup || !memberId)
+          return alert("Enter a user ID and select a group");
+
+        try {
+          const userRes = await fetch(
+            `http://localhost:8080/users/${memberId}`
+          );
+          if (!userRes.ok) throw new Error("User not found");
+
+          const res = await fetch(
+            `http://localhost:8080/groups/${currentGroup}/members`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ user_id: memberId, requester_id: userId }),
+            }
+          );
+          if (!res.ok)
+            throw new Error((await res.json()).error || "Failed to add member");
+          appendMessage(`[GROUP] Added ${memberId} to group`, "group-update");
+          updateGroupMembers();
+        } catch (err) {
+          logStatus(`Error: ${err.message}`, true);
+        }
+      }
+
+      async function kickMember(memberId) {
+        try {
+          const res = await fetch(
+            `http://localhost:8080/groups/${currentGroup}/members/${memberId}?requester_id=${userId}`,
+            { method: "DELETE" }
+          );
+          if (!res.ok)
+            throw new Error(
+              (await res.json()).error || "Failed to kick member"
+            );
+          appendMessage(
+            `[GROUP] Kicked ${memberId} from group`,
+            "group-update"
+          );
+          updateGroupMembers();
+        } catch (err) {
+          logStatus(`Error: ${err.message}`, true);
+        }
+      }
+
+      async function addAdmin(memberId) {
+        try {
+          const res = await fetch(
+            `http://localhost:8080/groups/${currentGroup}/admins/${memberId}?requester_id=${userId}`,
+            { method: "PUT" }
+          );
+          if (!res.ok)
+            throw new Error((await res.json()).error || "Failed to add admin");
+          appendMessage(`[GROUP] Made ${memberId} an admin`, "group-update");
+          updateGroupMembers();
+        } catch (err) {
+          logStatus(`Error: ${err.message}`, true);
+        }
+      }
+
+      async function removeAdmin(memberId) {
+        try {
+          const res = await fetch(
+            `http://localhost:8080/groups/${currentGroup}/admins/${memberId}?requester_id=${userId}`,
+            { method: "DELETE" }
+          );
+          if (!res.ok)
+            throw new Error(
+              (await res.json()).error || "Failed to remove admin"
+            );
+          appendMessage(`[GROUP] Removed ${memberId} as admin`, "group-update");
+          updateGroupMembers();
+        } catch (err) {
+          logStatus(`Error: ${err.message}`, true);
+        }
+      }
+
+      async function loadMessageHistory(id, isGroup) {
+        try {
+          const url = isGroup
+            ? `http://localhost:8080/groups/${id}/messages`
+            : `http://localhost:8080/users/${userId}/messages/${id}`;
+          const res = await fetch(url);
+          if (!res.ok)
+            throw new Error(
+              (await res.json()).error || "Failed to load messages"
+            );
+          const messages = await res.json();
+          const div = document.getElementById("messages");
+          div.innerHTML = "";
+          messages.forEach((msg) => {
+            appendMessage(`[${msg.sender_id}] ${msg.content}`);
+          });
+        } catch (err) {
+          logStatus(`Error loading message history: ${err.message}`, true);
+        }
+      }
+
+      function startChat(id, isGroup) {
+        document.getElementById("targetId").value = id;
+        document.getElementById("isGroup").checked = isGroup;
+        document.getElementById("group-management").style.display = isGroup
+          ? "block"
+          : "none";
+        currentGroup = isGroup ? id : null;
+        if (isGroup) {
+          joinGroup(id);
+        } else {
+          loadMessageHistory(id, false);
+        }
+      }
+
+      function sendMessage() {
+        const content = document.getElementById("messageInput").value.trim();
+        if (!content || !socket || socket.readyState !== WebSocket.OPEN) return;
+
+        const isGroup = document.getElementById("isGroup").checked;
+        targetId = document.getElementById("targetId").value.trim();
+
+        socket.send(
+          JSON.stringify({
+            type: "message",
+            sender_id: userId,
+            [isGroup ? "group_id" : "receiver_id"]: targetId,
+            content,
           })
         );
 
-        const el = document.getElementById('group-members');
-        el.innerHTML = memberDetails.map(member => `
-          <div class="user-item">
-            ${member.username} (${member.id})
-            ${group.admins.includes(member.id) ? ' (Admin)' : ''}
-            ${member.id === group.owner_id ? ' (Owner)' : ''}
-            ${isOwner || isAdmin ? `
-              <button onclick="kickMember('${member.id}')">Kick</button>
-            ` : ''}
-            ${isOwner && member.id !== userId ? `
-              ${group.admins.includes(member.id) ?
-                `<button onclick="removeAdmin('${member.id}')">Remove Admin</button>` :
-                `<button onclick="addAdmin('${member.id}')">Make Admin</button>`}
-            ` : ''}
-          </div>
-        `).join('');
-      } catch (err) {
-        logStatus(`Error fetching group members: ${err.message}`, true);
+        appendMessage(`[${userId}] ${content}`);
+        document.getElementById("messageInput").value = "";
+        sendTyping(true);
       }
-    }
 
-    async function addMember() {
-      const memberId = document.getElementById('addMemberId').value.trim();
-      if (!currentGroup || !memberId) return alert("Enter a user ID and select a group");
+      function sendTyping(forceStop = false) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        targetId = document.getElementById("targetId").value.trim();
+        if (!targetId) return;
 
-      try {
-        const userRes = await fetch(`http://localhost:8080/users/${memberId}`);
-        if (!userRes.ok) throw new Error('User not found');
+        clearTimeout(typingTimeout);
 
-        const res = await fetch(`http://localhost:8080/groups/${currentGroup}/members`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: memberId, requester_id: userId })
-        });
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed to add member');
-        appendMessage(`[GROUP] Added ${memberId} to group`, 'group-update');
-        updateGroupMembers();
-      } catch (err) {
-        logStatus(`Error: ${err.message}`, true);
-      }
-    }
-
-    async function kickMember(memberId) {
-      try {
-        const res = await fetch(
-          `http://localhost:8080/groups/${currentGroup}/members/${memberId}?requester_id=${userId}`,
-          { method: 'DELETE' }
-        );
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed to kick member');
-        appendMessage(`[GROUP] Kicked ${memberId} from group`, 'group-update');
-        updateGroupMembers();
-      } catch (err) {
-        logStatus(`Error: ${err.message}`, true);
-      }
-    }
-
-    async function addAdmin(memberId) {
-      try {
-        const res = await fetch(
-          `http://localhost:8080/groups/${currentGroup}/admins/${memberId}?requester_id=${userId}`,
-          { method: 'PUT' }
-        );
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed to add admin');
-        appendMessage(`[GROUP] Made ${memberId} an admin`, 'group-update');
-        updateGroupMembers();
-      } catch (err) {
-        logStatus(`Error: ${err.message}`, true);
-      }
-    }
-
-    async function removeAdmin(memberId) {
-      try {
-        const res = await fetch(
-          `http://localhost:8080/groups/${currentGroup}/admins/${memberId}?requester_id=${userId}`,
-          { method: 'DELETE' }
-        );
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed to remove admin');
-        appendMessage(`[GROUP] Removed ${memberId} as admin`, 'group-update');
-        updateGroupMembers();
-      } catch (err) {
-        logStatus(`Error: ${err.message}`, true);
-      }
-    }
-
-    async function loadMessageHistory(id, isGroup) {
-      try {
-        const url = isGroup
-          ? `http://localhost:8080/groups/${id}/messages`
-          : `http://localhost:8080/users/${userId}/messages/${id}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error((await res.json()).error || 'Failed to load messages');
-        const messages = await res.json();
-        const div = document.getElementById('messages');
-        div.innerHTML = '';
-        messages.forEach(msg => {
-          appendMessage(`[${msg.sender_id}] ${msg.content}`);
-        });
-      } catch (err) {
-        logStatus(`Error loading message history: ${err.message}`, true);
-      }
-    }
-
-    function startChat(id, isGroup) {
-      document.getElementById('targetId').value = id;
-      document.getElementById('isGroup').checked = isGroup;
-      document.getElementById('group-management').style.display = isGroup ? 'block' : 'none';
-      currentGroup = isGroup ? id : null;
-      if (isGroup) {
-        joinGroup(id);
-      } else {
-        loadMessageHistory(id, false);
-      }
-    }
-
-    function sendMessage() {
-      const content = document.getElementById('messageInput').value.trim();
-      if (!content || !socket || socket.readyState !== WebSocket.OPEN) return;
-
-      const isGroup = document.getElementById('isGroup').checked;
-      targetId = document.getElementById('targetId').value.trim();
-
-      socket.send(JSON.stringify({
-        type: 'message',
-        sender_id: userId,
-        [isGroup ? 'group_id' : 'receiver_id']: targetId,
-        content
-      }));
-
-      appendMessage(`[${userId}] ${content}`);
-      document.getElementById('messageInput').value = '';
-      sendTyping(true);
-    }
-
-    function sendTyping(forceStop = false) {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
-      targetId = document.getElementById('targetId').value.trim();
-      if (!targetId) return;
-
-      clearTimeout(typingTimeout);
-
-      socket.send(JSON.stringify({
-        type: 'typing',
-        sender_id: userId,
-        [document.getElementById('isGroup').checked ? 'group_id' : 'receiver_id']: targetId,
-        status: forceStop ? 'stop' : 'start'
-      }));
-
-      if (!forceStop) {
-        typingTimeout = setTimeout(() => {
-          socket.send(JSON.stringify({
-            type: 'typing',
+        socket.send(
+          JSON.stringify({
+            type: "typing",
             sender_id: userId,
-            [document.getElementById('isGroup').checked ? 'group_id' : 'receiver_id']: targetId,
-            status: 'stop'
-          }));
-        }, 1000);
+            [document.getElementById("isGroup").checked
+              ? "group_id"
+              : "receiver_id"]: targetId,
+            status: forceStop ? "stop" : "start",
+          })
+        );
+
+        if (!forceStop) {
+          typingTimeout = setTimeout(() => {
+            socket.send(
+              JSON.stringify({
+                type: "typing",
+                sender_id: userId,
+                [document.getElementById("isGroup").checked
+                  ? "group_id"
+                  : "receiver_id"]: targetId,
+                status: "stop",
+              })
+            );
+          }, 1000);
+        }
       }
-    }
 
-    function appendMessage(msg, className = '') {
-      const div = document.getElementById('messages');
-      const el = document.createElement('div');
-      el.className = className;
-      el.textContent = msg;
-      div.appendChild(el);
-      div.scrollTop = div.scrollHeight;
-    }
-
-    function showTyping(user, isTyping) {
-      const typingEl = document.querySelector(`#typing-${user}`);
-      if (typingEl) typingEl.remove();
-      if (isTyping) {
-        const div = document.getElementById('messages');
-        const el = document.createElement('div');
-        el.id = `typing-${user}`;
-        el.className = 'typing';
-        el.textContent = `${user} is typing...`;
+      function appendMessage(msg, className = "") {
+        const div = document.getElementById("messages");
+        const el = document.createElement("div");
+        el.className = className;
+        el.textContent = msg;
         div.appendChild(el);
         div.scrollTop = div.scrollHeight;
       }
-    }
 
-    function logStatus(msg, isError = false) {
-      const el = document.getElementById('status');
-      el.textContent = msg;
-      el.className = isError ? 'error' : '';
-    }
-  </script>
-</body>
+      function showTyping(user, isTyping) {
+        const typingEl = document.querySelector(`#typing-${user}`);
+        if (typingEl) typingEl.remove();
+        if (isTyping) {
+          const div = document.getElementById("messages");
+          const el = document.createElement("div");
+          el.id = `typing-${user}`;
+          el.className = "typing";
+          el.textContent = `${user} is typing...`;
+          div.appendChild(el);
+          div.scrollTop = div.scrollHeight;
+        }
+      }
+
+      function logStatus(msg, isError = false) {
+        const el = document.getElementById("status");
+        el.textContent = msg;
+        el.className = isError ? "error" : "";
+      }
+    </script>
+  </body>
 </html>

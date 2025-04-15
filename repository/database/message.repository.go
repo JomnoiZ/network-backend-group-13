@@ -33,7 +33,7 @@ func (r *firestoreMessageRepository) SaveMessage(message *models.MessageDB) erro
 func (r *firestoreMessageRepository) GetGroupMessages(groupID string) ([]*models.MessageDB, error) {
     ctx := context.Background()
     iter := r.client.Collection("messages").Where("group_id", "==", groupID).OrderBy("timestamp", firestore.Asc).Documents(ctx)
-    var messages []*models.MessageDB
+    messages := []*models.MessageDB{}
     for {
         doc, err := iter.Next()
         if err == iterator.Done {
@@ -59,20 +59,20 @@ func (r *firestoreMessageRepository) GetDirectMessages(userID, targetID string) 
         Where("receiver_id", "in", []string{userID, targetID}).
         OrderBy("timestamp", firestore.Asc).
         Documents(ctx)
-    var messages []*models.MessageDB
-    for {
-        doc, err := iter.Next()
-        if err == iterator.Done {
-            break
-        }
-        if err != nil {
-            return nil, err
-        }
-        var msg models.MessageDB
-        if err := doc.DataTo(&msg); err != nil {
-            return nil, err
-        }
-        messages = append(messages, &msg)
-    }
-    return messages, nil
+	messages := []*models.MessageDB{}
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var msg models.MessageDB
+		if err := doc.DataTo(&msg); err != nil {
+			return nil, err
+		}
+		messages = append(messages, &msg)
+	}
+	return messages, nil
 }

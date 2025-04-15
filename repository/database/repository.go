@@ -12,7 +12,6 @@ type GroupRepository interface {
     GetGroup(groupID string) (*models.Group, error)
     CreateGroup(group *models.Group) (*models.Group, error)
     UpdateGroup(group *models.Group) error
-    GetGroupMessages(groupID string) ([]*models.MessageDB, error)
 }
 
 type MessageRepository interface {

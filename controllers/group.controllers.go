@@ -18,7 +18,7 @@ type GroupController interface {
     KickMember(c *gin.Context)
     AddAdmin(c *gin.Context)
     RemoveAdmin(c *gin.Context)
-    GetMessages(c *gin.Context)
+    GetGroupMessages(c *gin.Context)
 }
 
 func NewGroupController(groupService services.GroupService) GroupController {
@@ -124,7 +124,7 @@ func (c *groupController) RemoveAdmin(ctx *gin.Context) {
     ctx.JSON(http.StatusOK, gin.H{"message": "Admin removed"})
 }
 
-func (c *groupController) GetMessages(ctx *gin.Context) {
+func (c *groupController) GetGroupMessages(ctx *gin.Context) {
     groupID := ctx.Param("id")
     messages, err := c.groupService.GetGroupMessages(groupID)
     if err != nil {
