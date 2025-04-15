@@ -134,7 +134,7 @@
             body: JSON.stringify({ id: userId, username }),
           });
           if (!res.ok)
-            throw new Error((await res.json().error) || "Failed to register");
+            throw new Error((await res.json()).error || "Failed to register");
           logStatus("Registered successfully");
           updateGroups();
         } catch (err) {
@@ -200,7 +200,7 @@
           });
           if (!res.ok)
             throw new Error(
-              (await res.json().error) || "Failed to create group"
+              (await res.json()).error || "Failed to create group"
             );
           const group = await res.json();
           appendMessage(
@@ -280,28 +280,47 @@
             `http://localhost:8080/groups/${currentGroup}`
           );
           const group = await res.json();
-          const el = document.getElementById("group-members");
           const isOwner = group.owner_id === userId;
           const isAdmin = group.admins.includes(userId);
-          el.innerHTML = group.members
-            .map(
-              (m) => `
-          <div class="user-item">
-            ${m}${group.admins.includes(m) ? " (Admin)" : ""}${
-                m === group.owner_id ? " (Owner)" : ""
+
+          // Fetch usernames for all members
+          const memberDetails = await Promise.all(
+            group.members.map(async (memberId) => {
+              try {
+                const userRes = await fetch(
+                  `http://localhost:8080/users/${memberId}`
+                );
+                if (!userRes.ok) return { id: memberId, username: memberId }; // Fallback
+                const user = await userRes.json();
+                return { id: memberId, username: user.username || memberId };
+              } catch {
+                return { id: memberId, username: memberId };
               }
+            })
+          );
+
+          const el = document.getElementById("group-members");
+          el.innerHTML = memberDetails
+            .map(
+              (member) => `
+          <div class="user-item">
+            ${member.username} (${member.id})
+            ${group.admins.includes(member.id) ? " (Admin)" : ""}
+            ${member.id === group.owner_id ? " (Owner)" : ""}
             ${
               isOwner || isAdmin
-                ? `<button onclick="kickMember('${m}')">Kick</button>`
+                ? `
+              <button onclick="kickMember('${member.id}')">Kick</button>
+            `
                 : ""
             }
             ${
-              isOwner && m !== userId
+              isOwner && member.id !== userId
                 ? `
               ${
-                group.admins.includes(m)
-                  ? `<button onclick="removeAdmin('${m}')">Remove Admin</button>`
-                  : `<button onclick="addAdmin('${m}')">Make Admin</button>`
+                group.admins.includes(member.id)
+                  ? `<button onclick="removeAdmin('${member.id}')">Remove Admin</button>`
+                  : `<button onclick="addAdmin('${member.id}')">Make Admin</button>`
               }
             `
                 : ""
@@ -321,6 +340,12 @@
           return alert("Enter a user ID and select a group");
 
         try {
+          // Validate memberId exists
+          const userRes = await fetch(
+            `http://localhost:8080/users/${memberId}`
+          );
+          if (!userRes.ok) throw new Error("User not found");
+
           const res = await fetch(
             `http://localhost:8080/groups/${currentGroup}/members`,
             {
@@ -330,7 +355,7 @@
             }
           );
           if (!res.ok)
-            throw new Error((await res.json().error) || "Failed to add member");
+            throw new Error((await res.json()).error || "Failed to add member");
           appendMessage(`[GROUP] Added ${memberId} to group`, "group-update");
           updateGroupMembers();
         } catch (err) {
@@ -338,55 +363,52 @@
         }
       }
 
-      async function kickMember(userId) {
+      async function kickMember(memberId) {
         try {
           const res = await fetch(
-            `http://localhost:8080/groups/${currentGroup}/members/${userId}?requester_id=${userId}`,
-            {
-              method: "DELETE",
-            }
+            `http://localhost:8080/groups/${currentGroup}/members/${memberId}?requester_id=${userId}`,
+            { method: "DELETE" }
           );
           if (!res.ok)
             throw new Error(
-              (await res.json().error) || "Failed to kick member"
+              (await res.json()).error || "Failed to kick member"
             );
-          appendMessage(`[GROUP] Kicked ${userId} from group`, "group-update");
+          appendMessage(
+            `[GROUP] Kicked ${memberId} from group`,
+            "group-update"
+          );
           updateGroupMembers();
         } catch (err) {
           logStatus(`Error: ${err.message}`, true);
         }
       }
 
-      async function addAdmin(userId) {
+      async function addAdmin(memberId) {
         try {
           const res = await fetch(
-            `http://localhost:8080/groups/${currentGroup}/admins/${userId}?requester_id=${userId}`,
-            {
-              method: "PUT",
-            }
+            `http://localhost:8080/groups/${currentGroup}/admins/${memberId}?requester_id=${userId}`,
+            { method: "PUT" }
           );
           if (!res.ok)
-            throw new Error((await res.json().error) || "Failed to add admin");
-          appendMessage(`[GROUP] Made ${userId} an admin`, "group-update");
+            throw new Error((await res.json()).error || "Failed to add admin");
+          appendMessage(`[GROUP] Made ${memberId} an admin`, "group-update");
           updateGroupMembers();
         } catch (err) {
           logStatus(`Error: ${err.message}`, true);
         }
       }
 
-      async function removeAdmin(userId) {
+      async function removeAdmin(memberId) {
         try {
           const res = await fetch(
-            `http://localhost:8080/groups/${currentGroup}/admins/${userId}?requester_id=${userId}`,
-            {
-              method: "DELETE",
-            }
+            `http://localhost:8080/groups/${currentGroup}/admins/${memberId}?requester_id=${userId}`,
+            { method: "DELETE" }
           );
           if (!res.ok)
             throw new Error(
-              (await res.json().error) || "Failed to remove admin"
+              (await res.json()).error || "Failed to remove admin"
             );
-          appendMessage(`[GROUP] Removed ${userId} as admin`, "group-update");
+          appendMessage(`[GROUP] Removed ${memberId} as admin`, "group-update");
           updateGroupMembers();
         } catch (err) {
           logStatus(`Error: ${err.message}`, true);
@@ -400,7 +422,7 @@
           );
           const messages = await res.json();
           const div = document.getElementById("messages");
-          div.innerHTML = ""; // Clear current messages
+          div.innerHTML = "";
           messages.forEach((msg) => {
             appendMessage(`[${msg.sender_id}] ${msg.content}`);
           });
