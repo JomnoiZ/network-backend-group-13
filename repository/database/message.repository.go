@@ -9,19 +9,22 @@ import (
 )
 
 type firestoreMessageRepository struct {
-    client *firestore.Client
+	client *firestore.Client
 }
 
 func NewFirestoreMessageRepository(client *firestore.Client) MessageRepository {
-    return &firestoreMessageRepository{client: client}
+	return &firestoreMessageRepository{client: client}
 }
 
 func (r *firestoreMessageRepository) SaveMessage(message *models.MessageDB) error {
-    ctx := context.Background()
-    if message.ID == "" {
-        message.ID = firestore.DocumentID
-    }
-    message.Timestamp = time.Now()
-    _, err := r.client.Collection("messages").Doc(message.ID).Set(ctx, message)
-    return err
+	ctx := context.Background()
+	if message.ID == "" {
+		message.ID = r.client.Collection("messages").NewDoc().ID
+	}
+	message.Timestamp = time.Now()
+	_, err := r.client.Collection("messages").Doc(message.ID).Set(ctx, message)
+	if err != nil {
+		return err
+	}
+	return nil
 }
