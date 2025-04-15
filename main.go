@@ -21,8 +21,8 @@ func main() {
 
 	// Initialize services
 	websocketService := services.NewWebsocketService(messageRepo)
-	userService := services.NewUserService(userRepo, websocketService)
-	groupService := services.NewGroupService(groupRepo, userRepo, websocketService)
+	userService := services.NewUserService(userRepo, messageRepo, websocketService)
+	groupService := services.NewGroupService(groupRepo, userRepo, messageRepo, websocketService)
 
 	// Set up Gin router
 	r := gin.Default()

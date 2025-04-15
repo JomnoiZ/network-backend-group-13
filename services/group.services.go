@@ -12,6 +12,7 @@ import (
 type groupService struct {
     groupRepository  database.GroupRepository
     userRepository   database.UserRepository
+    messageRepository database.MessageRepository
     websocketService WebsocketService
 }
 
@@ -25,10 +26,11 @@ type GroupService interface {
     GetGroupMessages(groupID string) ([]*models.MessageDB, error)
 }
 
-func NewGroupService(groupRepo database.GroupRepository, userRepo database.UserRepository, wsService WebsocketService) GroupService {
+func NewGroupService(groupRepo database.GroupRepository, userRepo database.UserRepository, messageRepo database.MessageRepository, wsService WebsocketService) GroupService {
     return &groupService{
         groupRepository:  groupRepo,
         userRepository:   userRepo,
+        messageRepository: messageRepo,
         websocketService: wsService,
     }
 }
@@ -209,5 +211,5 @@ func (s *groupService) RemoveAdmin(groupID, userID, requesterID string) error {
 }
 
 func (s *groupService) GetGroupMessages(groupID string) ([]*models.MessageDB, error) {
-    return s.groupRepository.GetGroupMessages(groupID)
+    return s.messageRepository.GetGroupMessages(groupID)
 }

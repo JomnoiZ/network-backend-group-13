@@ -10,7 +10,7 @@ import (
 
 type userService struct {
     userRepository   database.UserRepository
-    messageRepo     database.MessageRepository
+    messageRepository     database.MessageRepository
     websocketService WebsocketService
     mutex            sync.RWMutex
 }
@@ -23,9 +23,10 @@ type UserService interface {
     GetDirectMessages(userID, targetID string) ([]*models.MessageDB, error)
 }
 
-func NewUserService(userRepo database.UserRepository, wsService WebsocketService) UserService {
+func NewUserService(userRepo database.UserRepository, messageRepo database.MessageRepository, wsService WebsocketService) UserService {
     return &userService{
         userRepository:   userRepo,
+        messageRepository: messageRepo,
         websocketService: wsService,
     }
 }
@@ -64,5 +65,5 @@ func (s *userService) GetDirectMessages(userID, targetID string) ([]*models.Mess
     if userID == "" || targetID == "" {
         return nil, errors.New("user ID and target ID are required")
     }
-    return s.messageRepo.GetDirectMessages(userID, targetID)
+    return s.messageRepository.GetDirectMessages(userID, targetID)
 }
