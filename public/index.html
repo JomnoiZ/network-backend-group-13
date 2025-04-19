@@ -340,6 +340,7 @@
         const TOAST_DURATION = 4000;
         const TOAST_FADE_DURATION = 500;
         const TYPING_TIMEOUT = 5000;
+        const MAX_TOAST_MESSAGE_LENGTH = 30;
 
         // State
         let state = {
@@ -587,16 +588,32 @@
                     const timestamp = msg.timestamp
                       ? new Date(msg.timestamp).toLocaleString()
                       : new Date().toLocaleString();
+                    const messageContent = `[${sanitizeInput(
+                      msg.sender
+                    )}] ${sanitizeInput(msg.content)}`;
                     appendMessage(
-                      `[${sanitizeInput(msg.sender)}] ${sanitizeInput(
-                        msg.content
-                      )}`,
+                      messageContent,
                       msg.id,
                       msg.sender === state.username
                         ? "message-own"
                         : "message-other",
                       timestamp
                     );
+                    // Show toast for messages from other users
+                    if (msg.sender !== state.username) {
+                      const truncatedContent =
+                        msg.content.length > MAX_TOAST_MESSAGE_LENGTH
+                          ? `${msg.content.substring(
+                              0,
+                              MAX_TOAST_MESSAGE_LENGTH
+                            )}...`
+                          : msg.content;
+                      showToast(
+                        `New message from ${sanitizeInput(
+                          msg.sender
+                        )}: ${sanitizeInput(truncatedContent)}`
+                      );
+                    }
                   }
                   break;
                 case "typing":
@@ -1225,25 +1242,23 @@
                           ? memberIsAdmin
                             ? `<button onclick="ChatApp.removeAdmin('${sanitizeInput(
                                 memberUsername
-                              )}')" class="bg-yellow-500 text-white px-1 py-0.5 rounded text-xs hover:bg-yellow-600 focus:outline-none focus:ring-1 focus:ring-yellow-500 ${
-                                state.processingButtons.has(buttonKey)
-                                  ? "button-loading"
-                                  : ""
-                              }" ${
+                              )}')" class="bg-yellow-500 text-white px-1 py-0.5 rounded text-xs hover:bg-yellow-600 focus:outline-none focus:ring-1 focus:ring-yellow-500 ${state.processingButtons.has(
+                                buttonKey
+                              )} ? "button-loading" : ""}" ${
                                 state.processingButtons.has(buttonKey)
                                   ? "disabled"
-                                : ""
+                                  : ""
                               } aria-label="Remove admin status from ${memberUsername}">Remove Admin</button>`
                             : `<button onclick="ChatApp.addAdmin('${sanitizeInput(
                                 memberUsername
                               )}')" class="bg-green-500 text-white px-1 py-0.5 rounded text-xs hover:bg-green-600 focus:outline-none focus:ring-1 focus:ring-green-500 ${
                                 state.processingButtons.has(buttonKey)
                                   ? "button-loading"
-                                : ""
+                                  : ""
                               }" ${
                                 state.processingButtons.has(buttonKey)
                                   ? "disabled"
-                                : ""
+                                  : ""
                               } aria-label="Make ${memberUsername} admin">Make Admin</button>`
                           : ""
                       }
