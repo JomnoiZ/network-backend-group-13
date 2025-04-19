@@ -77,6 +77,17 @@
       .error-input {
         border-color: #ef4444;
       }
+      .button-loading::after {
+        content: '';
+        display: inline-block;
+        border: 2px solid #ffffff;
+        border-top: 2px solid transparent;
+        border-radius: 50%;
+        width: 1rem;
+        height: 1rem;
+        animation: spin 0.75s linear infinite;
+        margin-left: 0.5rem;
+      }
     </style>
   </head>
   <body class="bg-gray-100 font-sans text-gray-800">
@@ -303,7 +314,7 @@
         const USERNAME_REGEX = /^[a-z0-9]{3,20}$/;
         const GROUP_NAME_REGEX = /^[\w\s-]{3,50}$/;
         const ID_REGEX = /^[a-z0-9-]{1,50}$/;
-        const MAX_MESSAGES = 1000; // Limit stored messages
+        const MAX_MESSAGES = 1000;
         const TOAST_DURATION = 3000;
 
         // State
@@ -315,6 +326,7 @@
           isRegistered: false,
           isConnected: false,
           isProcessing: false,
+          processingButtons: new Set(),
           reconnectAttempts: 0,
           displayedMessages: new Set(),
           allUsers: [],
@@ -363,9 +375,7 @@
           if (!message) return;
           elements.toast.textContent = message;
           elements.toast.className = `fixed top-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm toast ${
-            isError
-              ? "border-l-4 border-red-500"
-              : "border-l-4 border-green-500"
+            isError ? "border-l-4 border-red-500" : "border-l-4 border-green-500"
           }`;
           elements.toast.setAttribute("aria-label", message);
           setTimeout(() => {
@@ -411,7 +421,6 @@
 
         // UI Updates
         function updateUIState() {
-          if (state.isProcessing) return;
           const isSignedIn = state.isRegistered && state.isConnected;
           const usernameEntered = elements.username.value.trim();
           const targetSelected = elements.targetId.value.trim();
@@ -421,19 +430,16 @@
 
           // User Setup
           elements.username.disabled = isSignedIn;
-          elements.registerUser.disabled =
-            isSignedIn || !usernameEntered || state.isProcessing;
-          elements.loginUser.disabled =
-            isSignedIn || !usernameEntered || state.isProcessing;
-          elements.logoutUser.disabled = !isSignedIn || state.isProcessing;
+          elements.registerUser.disabled = isSignedIn || !usernameEntered;
+          elements.loginUser.disabled = isSignedIn || !usernameEntered;
+          elements.logoutUser.disabled = !isSignedIn;
           elements.registerUser.classList.toggle("hidden", isSignedIn);
           elements.loginUser.classList.toggle("hidden", isSignedIn);
           elements.logoutUser.classList.toggle("hidden", !isSignedIn);
 
           // Group Creation
           elements.groupName.disabled = !isSignedIn;
-          elements.createGroup.disabled =
-            !isSignedIn || !groupNameEntered || state.isProcessing;
+          elements.createGroup.disabled = !isSignedIn || !groupNameEntered;
 
           // Chat Selection
           elements.targetId.disabled = !isSignedIn;
@@ -441,20 +447,16 @@
 
           // Message Sending
           elements.messageInput.disabled = !isSignedIn || !targetSelected;
-          elements.sendMessage.disabled =
-            !isSignedIn ||
-            !targetSelected ||
-            !messageEntered ||
-            state.isProcessing;
+          elements.sendMessage.disabled = !isSignedIn || !targetSelected || !messageEntered;
 
           // Group Management
-          elements.addMemberUsername.disabled =
-            !isSignedIn || !state.currentGroup;
-          elements.addMember.disabled =
-            !isSignedIn ||
-            !state.currentGroup ||
-            !addMemberEntered ||
-            state.isProcessing;
+          elements.addMemberUsername.disabled = !isSignedIn || !state.currentGroup;
+          elements.addMember.disabled = !isSignedIn || !state.currentGroup || !addMemberEntered;
+
+          // Re-render group members to update button states
+          if (state.currentGroup) {
+            updateGroupMembers();
+          }
         }
 
         function appendMessage(content, id, className, timestamp) {
@@ -470,9 +472,7 @@
           msgDiv.className = `p-2 rounded text-sm ${className}`;
           msgDiv.innerHTML = `<div>${content}</div>${
             timestamp
-              ? `<div class="message-timestamp">${sanitizeInput(
-                  timestamp
-                )}</div>`
+              ? `<div class="message-timestamp">${sanitizeInput(timestamp)}</div>`
               : ""
           }`;
           if (id) {
@@ -514,10 +514,7 @@
               state.isConnected = true;
               state.reconnectAttempts = 0;
               showToast("Connected to chat");
-              appendStatusMessage(
-                `Connected as ${state.username}`,
-                "text-green-600"
-              );
+              appendStatusMessage(`Connected as ${state.username}`, "text-green-600");
               await Promise.all([updateAllUsers(), updateGroups()]);
               updateUIState();
             };
@@ -526,8 +523,7 @@
               let msg;
               try {
                 msg = JSON.parse(event.data);
-                if (!msg || !msg.type)
-                  throw new Error("Invalid message format");
+                if (!msg || !msg.type) throw new Error("Invalid message format");
               } catch (err) {
                 console.error("Malformed WebSocket message:", event.data);
                 return;
@@ -547,20 +543,15 @@
                       ? new Date(msg.timestamp).toLocaleString()
                       : new Date().toLocaleString();
                     appendMessage(
-                      `[${sanitizeInput(msg.sender)}] ${sanitizeInput(
-                        msg.content
-                      )}`,
+                      `[${sanitizeInput(msg.sender)}] ${sanitizeInput(msg.content)}`,
                       msg.id,
-                      msg.sender === state.username
-                        ? "message-own"
-                        : "message-other",
+                      msg.sender === state.username ? "message-own" : "message-other",
                       timestamp
                     );
                   }
                   break;
                 case "typing":
-                  if (!msg.group_id)
-                    showTyping(msg.sender, msg.status === "start");
+                  if (!msg.group_id) showTyping(msg.sender, msg.status === "start");
                   break;
                 case "status":
                   appendStatusMessage(
@@ -574,52 +565,33 @@
                   }
                   renderAllUsers();
                   break;
-                // In the WebSocket onmessage handler, inside the switch for "group_update"
                 case "group_update":
-                  const { type: groupUpdateType, data: groupUpdateData } =
-                    msg.data || {};
+                  const { type: groupUpdateType, data: groupUpdateData } = msg.data || {};
                   if (msg.group_id && groupUpdateType && groupUpdateData) {
                     appendMessage(
-                      `[GROUP/${sanitizeInput(msg.group_id)}] ${sanitizeInput(
-                        groupUpdateType
-                      )}: ${sanitizeInput(JSON.stringify(groupUpdateData))}`,
+                      `[GROUP/${sanitizeInput(msg.group_id)}] ${sanitizeInput(groupUpdateType)}: ${sanitizeInput(JSON.stringify(groupUpdateData))}`,
                       "",
                       "text-blue-600 status-message",
                       new Date().toLocaleString()
                     );
-                    if (msg.group_id === currentGroup) {
+                    if (msg.group_id === state.currentGroup) {
                       await updateGroupMembers();
-                      if (
-                        groupUpdateType === "kick" &&
-                        groupUpdateData.username === username
-                      ) {
-                        // User was kicked from the group
-                        currentGroup = null;
-                        targetId = null;
-                        document.getElementById("targetId").value = "";
-                        document.getElementById("isGroup").checked = false;
-                        document
-                          .getElementById("group-management")
-                          .classList.add("hidden");
-                        document.getElementById("messages").innerHTML = "";
-                        document.getElementById("chat-context").textContent =
-                          "";
-                        showToast(
-                          `You were kicked from group ${msg.group_id}`,
-                          true
-                        );
+                      if (groupUpdateType === "kick" && groupUpdateData.username === state.username) {
+                        state.currentGroup = null;
+                        state.targetId = null;
+                        elements.targetId.value = "";
+                        elements.isGroup.checked = false;
+                        elements.groupManagement.classList.add("hidden");
+                        elements.messages.innerHTML = "";
+                        elements.chatContext.textContent = "";
+                        showToast(`You were kicked from group ${msg.group_id}`, true);
                       }
                     }
                     await updateGroups();
                   }
                   break;
                 case "error":
-                  showToast(
-                    `WebSocket Error: ${sanitizeInput(
-                      msg.message || "Unknown error"
-                    )}`,
-                    true
-                  );
+                  showToast(`WebSocket Error: ${sanitizeInput(msg.message || "Unknown error")}`, true);
                   break;
                 default:
                   console.warn("Unknown message type:", msg.type);
@@ -650,42 +622,26 @@
         }
 
         function attemptReconnect() {
-          if (
-            state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS ||
-            !state.username
-          ) {
-            showToast(
-              "Max reconnect attempts reached. Please log in again.",
-              true
-            );
+          if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS || !state.username) {
+            showToast("Max reconnect attempts reached. Please log in again.", true);
             return;
           }
           state.reconnectAttempts++;
-          showToast(
-            `Reconnecting... (Attempt ${state.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
-          );
+          showToast(`Reconnecting... (Attempt ${state.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
           setTimeout(async () => {
-            if (state.isConnected || state.isProcessing) return;
+            if (state.isConnected) return;
             await connect();
           }, RECONNECT_INTERVAL);
         }
 
         // API Calls
         async function registerUser() {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
+          if (state.isProcessing) return showToast("Another action is in progress", true);
           state.isProcessing = true;
           updateUIState();
 
           const usernameInput = elements.username.value.trim().toLowerCase();
-          if (
-            !validateInput(
-              usernameInput,
-              USERNAME_REGEX,
-              "username",
-              "Username must be 3-20 alphanumeric characters"
-            )
-          ) {
+          if (!validateInput(usernameInput, USERNAME_REGEX, "username", "Username must be 3-20 alphanumeric characters")) {
             state.isProcessing = false;
             updateUIState();
             return;
@@ -703,17 +659,12 @@
             }
             if (!res.ok) {
               const errorData = await res.json();
-              throw new Error(
-                errorData.error || `Failed to register (${res.status})`
-              );
+              throw new Error(errorData.error || `Failed to register (${res.status})`);
             }
 
             state.isRegistered = true;
             showToast(`Registered successfully as ${state.username}`);
-            appendStatusMessage(
-              `Registered as ${state.username}`,
-              "text-green-600"
-            );
+            appendStatusMessage(`Registered as ${state.username}`, "text-green-600");
             await Promise.all([updateAllUsers(), updateGroups()]);
           } catch (err) {
             state.username = null;
@@ -725,20 +676,12 @@
         }
 
         async function loginUser() {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
+          if (state.isProcessing) return showToast("Another action is in progress", true);
           state.isProcessing = true;
           updateUIState();
 
           const usernameInput = elements.username.value.trim().toLowerCase();
-          if (
-            !validateInput(
-              usernameInput,
-              USERNAME_REGEX,
-              "username",
-              "Username must be 3-20 alphanumeric characters"
-            )
-          ) {
+          if (!validateInput(usernameInput, USERNAME_REGEX, "username", "Username must be 3-20 alphanumeric characters")) {
             state.isProcessing = false;
             updateUIState();
             return;
@@ -746,9 +689,7 @@
           state.username = usernameInput;
 
           try {
-            const userRes = await fetch(
-              `${API_BASE}/users/${encodeURIComponent(state.username)}`
-            );
+            const userRes = await fetch(`${API_BASE}/users/${encodeURIComponent(state.username)}`);
             if (!userRes.ok) {
               if (userRes.status === 404) {
                 throw new Error("Username not found. Try registering.");
@@ -769,8 +710,7 @@
         }
 
         async function logoutUser() {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
+          if (state.isProcessing) return showToast("Another action is in progress", true);
           state.isProcessing = true;
           updateUIState();
 
@@ -793,6 +733,7 @@
           state.onlineUsers.clear();
           state.groups = [];
           state.reconnectAttempts = 0;
+          state.processingButtons.clear();
 
           elements.username.value = "";
           elements.targetId.value = "";
@@ -818,20 +759,12 @@
         }
 
         async function createGroup() {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
+          if (state.isProcessing) return showToast("Another action is in progress", true);
           state.isProcessing = true;
           updateUIState();
 
           const groupName = elements.groupName.value.trim();
-          if (
-            !validateInput(
-              groupName,
-              GROUP_NAME_REGEX,
-              "groupName",
-              "Group name must be 3-50 characters (alphanumeric, spaces, hyphens)"
-            )
-          ) {
+          if (!validateInput(groupName, GROUP_NAME_REGEX, "groupName", "Group name must be 3-50 characters (alphanumeric, spaces, hyphens)")) {
             state.isProcessing = false;
             updateUIState();
             return;
@@ -851,15 +784,10 @@
             });
             if (!res.ok) {
               const errorData = await res.json();
-              throw new Error(
-                errorData.error || `Failed to create group (${res.status})`
-              );
+              throw new Error(errorData.error || `Failed to create group (${res.status})`);
             }
             const group = await res.json();
-            appendStatusMessage(
-              `Created group ${sanitizeInput(group.name)} (${group.id})`,
-              "text-green-600"
-            );
+            appendStatusMessage(`Created group ${sanitizeInput(group.name)} (${group.id})`, "text-green-600");
             await updateGroups();
             elements.groupName.value = "";
             showToast("Group created successfully");
@@ -874,16 +802,12 @@
         async function updateAllUsers() {
           try {
             const allRes = await fetch(`${API_BASE}/users`);
-            if (!allRes.ok)
-              throw new Error(`Failed to fetch users (${allRes.status})`);
+            if (!allRes.ok) throw new Error(`Failed to fetch users (${allRes.status})`);
             state.allUsers = await allRes.json();
 
             if (state.isConnected) {
               const onlineRes = await fetch(`${API_BASE}/users/online`);
-              if (!onlineRes.ok)
-                throw new Error(
-                  `Failed to fetch online users (${onlineRes.status})`
-                );
+              if (!onlineRes.ok) throw new Error(`Failed to fetch online users (${onlineRes.status})`);
               const onlineUsers = await onlineRes.json();
               state.onlineUsers.clear();
               onlineUsers.forEach((u) => {
@@ -910,27 +834,19 @@
             .filter((u) => u.username)
             .map((u) => {
               const isOnline = state.onlineUsers.has(u.username);
-              const statusClass = isOnline
-                ? "user-status-online"
-                : "user-status-offline";
+              const statusClass = isOnline ? "user-status-online" : "user-status-offline";
               const statusText = isOnline ? "Online" : "Offline";
               const chatButton =
                 u.username !== state.username
-                  ? `<button onclick="ChatApp.startChat('${sanitizeInput(
-                      u.username
-                    )}', false)" class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  ? `<button onclick="ChatApp.startChat('${sanitizeInput(u.username)}', false)" class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                       !state.isConnected ? "hidden" : ""
-                    }" ${
-                      !state.isConnected ? "disabled" : ""
-                    } aria-label="Chat with ${u.username}">Chat</button>`
+                    }" ${!state.isConnected ? "disabled" : ""} aria-label="Chat with ${u.username}">Chat</button>`
                   : "(You)";
 
               return `
                 <div class="flex items-center justify-between p-1 hover:bg-gray-100 rounded text-sm">
                   <span>
-                    ${sanitizeInput(
-                      u.username
-                    )} <span class="${statusClass}">(${statusText})</span>
+                    ${sanitizeInput(u.username)} <span class="${statusClass}">(${statusText})</span>
                   </span>
                   ${chatButton}
                 </div>
@@ -946,9 +862,7 @@
           }
 
           try {
-            const res = await fetch(
-              `${API_BASE}/users/${encodeURIComponent(state.username)}/groups`
-            );
+            const res = await fetch(`${API_BASE}/users/${encodeURIComponent(state.username)}/groups`);
             if (!res.ok) {
               if (res.status === 404) {
                 elements.groups.innerHTML = "<p>No groups joined.</p>";
@@ -968,13 +882,9 @@
                 (g) => `
                 <div class="flex items-center justify-between p-2 hover:bg-gray-100 rounded">
                   <span>${sanitizeInput(g.name)} (${sanitizeInput(g.id)})</span>
-                  <button onclick="ChatApp.joinGroup('${sanitizeInput(
-                    g.id
-                  )}')" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  !state.isConnected ? "hidden" : ""
-                }" ${
-                  !state.isConnected ? "disabled" : ""
-                } aria-label="Join group ${g.name}">Chat</button>
+                  <button onclick="ChatApp.joinGroup('${sanitizeInput(g.id)}')" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    !state.isConnected ? "hidden" : ""
+                  }" ${!state.isConnected ? "disabled" : ""} aria-label="Join group ${g.name}">Chat</button>
                 </div>
               `
               )
@@ -986,18 +896,9 @@
         }
 
         async function joinGroup(groupId) {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
-          if (!state.isConnected)
-            return showToast("Login first to join a group", true);
-          if (
-            !validateInput(
-              groupId,
-              ID_REGEX,
-              "targetId",
-              "Group ID must be 1-50 alphanumeric characters or hyphens"
-            )
-          ) {
+          if (state.isProcessing) return showToast("Another action is in progress", true);
+          if (!state.isConnected) return showToast("Login first to join a group", true);
+          if (!validateInput(groupId, ID_REGEX, "targetId", "Group ID must be 1-50 alphanumeric characters or hyphens")) {
             return;
           }
 
@@ -1005,9 +906,7 @@
           updateUIState();
 
           try {
-            const res = await fetch(
-              `${API_BASE}/groups/${encodeURIComponent(groupId)}`
-            );
+            const res = await fetch(`${API_BASE}/groups/${encodeURIComponent(groupId)}`);
             if (!res.ok) {
               if (res.status === 404) throw new Error("Group not found");
               if (res.status === 403) throw new Error("Access to group denied");
@@ -1047,9 +946,7 @@
             await updateGroupMembers();
 
             appendStatusMessage(
-              `Joined group chat ${sanitizeInput(group.name)} (${sanitizeInput(
-                groupId
-              )})`,
+              `Joined group chat ${sanitizeInput(group.name)} (${sanitizeInput(groupId)})`,
               "text-blue-600"
             );
             showToast(`Joined group ${sanitizeInput(group.name)}`);
@@ -1069,17 +966,14 @@
           }
 
           try {
-            const res = await fetch(
-              `${API_BASE}/groups/${encodeURIComponent(state.currentGroup)}`
-            );
+            const res = await fetch(`${API_BASE}/groups/${encodeURIComponent(state.currentGroup)}`);
             if (!res.ok) {
               if (res.status === 404) throw new Error("Group not found");
               throw new Error(`Failed to fetch group details (${res.status})`);
             }
             const group = await res.json();
             const isOwner = group.owner === state.username;
-            const isAdmin =
-              group.admins && group.admins.includes(state.username);
+            const isAdmin = group.admins && group.admins.includes(state.username);
             const memberUsernames = group.members || [];
             const adminUsernames = new Set(group.admins || []);
 
@@ -1093,14 +987,9 @@
               .map((memberUsername) => {
                 const memberIsAdmin = adminUsernames.has(memberUsername);
                 const memberIsOwner = memberUsername === group.owner;
-                const showKick =
-                  (isOwner || isAdmin) &&
-                  memberUsername !== state.username &&
-                  !memberIsOwner;
-                const showAdminToggle =
-                  isOwner &&
-                  memberUsername !== state.username &&
-                  !memberIsOwner;
+                const showKick = (isOwner || isAdmin) && memberUsername !== state.username && !memberIsOwner;
+                const showAdminToggle = isOwner && memberUsername !== state.username && !memberIsOwner;
+                const buttonKey = `${memberUsername}-${showKick ? "kick" : ""}-${showAdminToggle ? (memberIsAdmin ? "removeAdmin" : "addAdmin") : ""}`;
 
                 return `
                   <div class="flex items-center justify-between p-1 hover:bg-gray-100 rounded text-sm">
@@ -1112,26 +1001,20 @@
                     <div class="space-x-1">
                       ${
                         showKick
-                          ? `<button onclick="ChatApp.kickMember('${sanitizeInput(
-                              memberUsername
-                            )}')" class="bg-red-500 text-white px-1 py-0.5 rounded text-xs hover:bg-red-600 focus:outline-none focus:ring-1 focus:ring-red-500" ${
-                              state.isProcessing ? "disabled" : ""
-                            } aria-label="Kick ${memberUsername} from group">Kick</button>`
+                          ? `<button onclick="ChatApp.kickMember('${sanitizeInput(memberUsername)}')" class="bg-red-500 text-white px-1 py-0.5 rounded text-xs hover:bg-red-600 focus:outline-none focus:ring-1 focus:ring-red-500 ${
+                              state.processingButtons.has(buttonKey) ? "button-loading" : ""
+                            }" ${state.processingButtons.has(buttonKey) ? "disabled" : ""} aria-label="Kick ${memberUsername} from group">Kick</button>`
                           : ""
                       }
                       ${
                         showAdminToggle
                           ? memberIsAdmin
-                            ? `<button onclick="ChatApp.removeAdmin('${sanitizeInput(
-                                memberUsername
-                              )}')" class="bg-yellow-500 text-white px-1 py-0.5 rounded text-xs hover:bg-yellow-600 focus:outline-none focus:ring-1 focus:ring-yellow-500" ${
-                                state.isProcessing ? "disabled" : ""
-                              } aria-label="Remove admin status from ${memberUsername}">Remove Admin</button>`
-                            : `<button onclick="ChatApp.addAdmin('${sanitizeInput(
-                                memberUsername
-                              )}')" class="bg-green-500 text-white px-1 py-0.5 rounded text-xs hover:bg-green-600 focus:outline-none focus:ring-1 focus:ring-green-500" ${
-                                state.isProcessing ? "disabled" : ""
-                              } aria-label="Make ${memberUsername} admin">Make Admin</button>`
+                            ? `<button onclick="ChatApp.removeAdmin('${sanitizeInput(memberUsername)}')" class="bg-yellow-500 text-white px-1 py-0.5 rounded text-xs hover:bg-yellow-600 focus:outline-none focus:ring-1 focus:ring-yellow-500 ${
+                                state.processingButtons.has(buttonKey) ? "button-loading" : ""
+                              }" ${state.processingButtons.has(buttonKey) ? "disabled" : ""} aria-label="Remove admin status from ${memberUsername}">Remove Admin</button>`
+                            : `<button onclick="ChatApp.addAdmin('${sanitizeInput(memberUsername)}')" class="bg-green-500 text-white px-1 py-0.5 rounded text-xs hover:bg-green-600 focus:outline-none focus:ring-1 focus:ring-green-500 ${
+                                state.processingButtons.has(buttonKey) ? "button-loading" : ""
+                              }" ${state.processingButtons.has(buttonKey) ? "disabled" : ""} aria-label="Make ${memberUsername} admin">Make Admin</button>`
                           : ""
                       }
                     </div>
@@ -1146,24 +1029,12 @@
         }
 
         async function startChat(targetUsername, isGroup) {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
-          if (!state.isConnected)
-            return showToast("Login first to start a chat", true);
-          if (
-            !validateInput(
-              targetUsername,
-              ID_REGEX,
-              "targetId",
-              "Target ID must be 1-50 alphanumeric characters or hyphens"
-            )
-          ) {
+          if (state.isProcessing) return showToast("Another action is in progress", true);
+          if (!state.isConnected) return showToast("Login first to start a chat", true);
+          if (!validateInput(targetUsername, ID_REGEX, "targetId", "Target ID must be 1-50 alphanumeric characters or hyphens")) {
             return;
           }
-          if (
-            !isGroup &&
-            targetUsername.toLowerCase() === state.username.toLowerCase()
-          ) {
+          if (!isGroup && targetUsername.toLowerCase() === state.username.toLowerCase()) {
             return showToast("Cannot chat with yourself", true);
           }
 
@@ -1174,9 +1045,7 @@
             if (isGroup) {
               await joinGroup(targetUsername);
             } else {
-              const res = await fetch(
-                `${API_BASE}/users/${encodeURIComponent(targetUsername)}`
-              );
+              const res = await fetch(`${API_BASE}/users/${encodeURIComponent(targetUsername)}`);
               if (!res.ok) {
                 if (res.status === 404) throw new Error("User not found");
                 throw new Error(`Failed to verify user (${res.status})`);
@@ -1191,10 +1060,7 @@
               elements.messages.innerHTML = "";
               elements.typingStatus.textContent = "";
 
-              appendStatusMessage(
-                `Started chat with ${sanitizeInput(targetUsername)}`,
-                "text-blue-600"
-              );
+              appendStatusMessage(`Started chat with ${sanitizeInput(targetUsername)}`, "text-blue-600");
               await loadMessageHistory(targetUsername, false);
               await updateChatHeader(targetUsername, false);
             }
@@ -1209,17 +1075,13 @@
         async function updateChatHeader(id, isGroup) {
           try {
             if (isGroup) {
-              const res = await fetch(
-                `${API_BASE}/groups/${encodeURIComponent(id)}`
-              );
+              const res = await fetch(`${API_BASE}/groups/${encodeURIComponent(id)}`);
               if (!res.ok) {
                 if (res.status === 404) throw new Error("Group not found");
                 throw new Error(`Failed to fetch group (${res.status})`);
               }
               const group = await res.json();
-              elements.chatContext.textContent = `(Group: ${sanitizeInput(
-                group.name || id
-              )})`;
+              elements.chatContext.textContent = `(Group: ${sanitizeInput(group.name || id)})`;
             } else {
               elements.chatContext.textContent = `(User: ${sanitizeInput(id)})`;
             }
@@ -1234,17 +1096,13 @@
           try {
             const url = isGroup
               ? `${API_BASE}/groups/${encodeURIComponent(id)}/messages`
-              : `${API_BASE}/users/${encodeURIComponent(
-                  state.username
-                )}/messages/${encodeURIComponent(id)}`;
+              : `${API_BASE}/users/${encodeURIComponent(state.username)}/messages/${encodeURIComponent(id)}`;
             const res = await fetch(url);
             if (!res.ok) {
               if (res.status === 404) {
                 throw new Error(isGroup ? "Group not found" : "Chat not found");
               }
-              throw new Error(
-                `Failed to fetch message history (${res.status})`
-              );
+              throw new Error(`Failed to fetch message history (${res.status})`);
             }
             const messages = await res.json();
             state.displayedMessages.clear();
@@ -1262,13 +1120,9 @@
                       : new Date(msg.timestamp).toLocaleString()
                     : new Date().toLocaleString();
                   appendMessage(
-                    `[${sanitizeInput(msg.sender)}] ${sanitizeInput(
-                      msg.content
-                    )}`,
+                    `[${sanitizeInput(msg.sender)}] ${sanitizeInput(msg.content)}`,
                     msg.id,
-                    msg.sender === state.username
-                      ? "message-own"
-                      : "message-other",
+                    msg.sender === state.username ? "message-own" : "message-other",
                     timestamp
                   );
                 }
@@ -1276,35 +1130,20 @@
             }
           } catch (err) {
             showToast(`Error loading messages: ${err.message}`, true);
-            appendMessage(
-              `Failed to load message history.`,
-              "",
-              "text-red-500 status-message",
-              new Date().toLocaleString()
-            );
+            appendMessage(`Failed to load message history.`, "", "text-red-500 status-message", new Date().toLocaleString());
           } finally {
             elements.loading.classList.add("hidden");
           }
         }
 
         async function addMember() {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
+          if (state.isProcessing) return showToast("Another action is in progress", true);
           if (!state.currentGroup || !state.username) {
             return showToast("Select a group and ensure logged in", true);
           }
 
-          const memberUsername = elements.addMemberUsername.value
-            .trim()
-            .toLowerCase();
-          if (
-            !validateInput(
-              memberUsername,
-              USERNAME_REGEX,
-              "addMemberUsername",
-              "Username must be 3-20 alphanumeric characters"
-            )
-          ) {
+          const memberUsername = elements.addMemberUsername.value.trim().toLowerCase();
+          if (!validateInput(memberUsername, USERNAME_REGEX, "addMemberUsername", "Username must be 3-20 alphanumeric characters")) {
             return;
           }
 
@@ -1314,9 +1153,7 @@
           try {
             elements.addMember.disabled = true;
             const res = await fetch(
-              `${API_BASE}/groups/${encodeURIComponent(
-                state.currentGroup
-              )}/members`,
+              `${API_BASE}/groups/${encodeURIComponent(state.currentGroup)}/members`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -1328,9 +1165,7 @@
             );
             if (!res.ok) {
               const errorData = await res.json();
-              throw new Error(
-                errorData.error || `Failed to add member (${res.status})`
-              );
+              throw new Error(errorData.error || `Failed to add member (${res.status})`);
             }
             elements.addMemberUsername.value = "";
             await updateGroupMembers();
@@ -1344,141 +1179,104 @@
         }
 
         async function kickMember(memberUsername) {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
+          if (state.processingButtons.has(`${memberUsername}-kick`)) return;
           if (!state.currentGroup || !state.username) {
             return showToast("Select a group and ensure logged in", true);
           }
 
-          state.isProcessing = true;
+          state.processingButtons.add(`${memberUsername}-kick`);
           updateUIState();
 
           try {
             const res = await fetch(
-              `${API_BASE}/groups/${encodeURIComponent(
-                state.currentGroup
-              )}/members/${encodeURIComponent(
-                memberUsername
-              )}?requester=${encodeURIComponent(state.username)}`,
+              `${API_BASE}/groups/${encodeURIComponent(state.currentGroup)}/members/${encodeURIComponent(memberUsername)}?requester=${encodeURIComponent(state.username)}`,
               {
                 method: "DELETE",
               }
             );
             if (!res.ok) {
               const errorData = await res.json();
-              throw new Error(
-                errorData.error || `Failed to kick member (${res.status})`
-              );
+              throw new Error(errorData.error || `Failed to kick member (${res.status})`);
             }
             await updateGroupMembers();
             showToast(`Kicked ${sanitizeInput(memberUsername)} from group`);
           } catch (err) {
             showToast(`Error kicking member: ${err.message}`, true);
           } finally {
-            state.isProcessing = false;
+            state.processingButtons.delete(`${memberUsername}-kick`);
             updateUIState();
           }
         }
 
         async function addAdmin(memberUsername) {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
+          if (state.processingButtons.has(`${memberUsername}-addAdmin`)) return;
           if (!state.currentGroup || !state.username) {
             return showToast("Select a group and ensure logged in", true);
           }
 
-          state.isProcessing = true;
+          state.processingButtons.add(`${memberUsername}-addAdmin`);
           updateUIState();
 
           try {
             const res = await fetch(
-              `${API_BASE}/groups/${encodeURIComponent(
-                state.currentGroup
-              )}/admins/${encodeURIComponent(
-                memberUsername
-              )}?requester=${encodeURIComponent(state.username)}`,
+              `${API_BASE}/groups/${encodeURIComponent(state.currentGroup)}/admins/${encodeURIComponent(memberUsername)}?requester=${encodeURIComponent(state.username)}`,
               {
                 method: "PUT",
               }
             );
             if (!res.ok) {
               const errorData = await res.json();
-              throw new Error(
-                errorData.error || `Failed to add admin (${res.status})`
-              );
+              throw new Error(errorData.error || `Failed to add admin (${res.status})`);
             }
             await updateGroupMembers();
             showToast(`Made ${sanitizeInput(memberUsername)} an admin`);
           } catch (err) {
             showToast(`Error adding admin: ${err.message}`, true);
           } finally {
-            state.isProcessing = false;
+            state.processingButtons.delete(`${memberUsername}-addAdmin`);
             updateUIState();
           }
         }
 
         async function removeAdmin(memberUsername) {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
+          if (state.processingButtons.has(`${memberUsername}-removeAdmin`)) return;
           if (!state.currentGroup || !state.username) {
             return showToast("Select a group and ensure logged in", true);
           }
 
-          state.isProcessing = true;
+          state.processingButtons.add(`${memberUsername}-removeAdmin`);
           updateUIState();
 
           try {
             const res = await fetch(
-              `${API_BASE}/groups/${encodeURIComponent(
-                state.currentGroup
-              )}/admins/${encodeURIComponent(
-                memberUsername
-              )}?requester=${encodeURIComponent(state.username)}`,
+              `${API_BASE}/groups/${encodeURIComponent(state.currentGroup)}/admins/${encodeURIComponent(memberUsername)}?requester=${encodeURIComponent(state.username)}`,
               {
                 method: "DELETE",
               }
             );
             if (!res.ok) {
               const errorData = await res.json();
-              throw new Error(
-                errorData.error || `Failed to remove admin (${res.status})`
-              );
+              throw new Error(errorData.error || `Failed to remove admin (${res.status})`);
             }
             await updateGroupMembers();
-            showToast(
-              `Removed admin status from ${sanitizeInput(memberUsername)}`
-            );
+            showToast(`Removed admin status from ${sanitizeInput(memberUsername)}`);
           } catch (err) {
             showToast(`Error removing admin: ${err.message}`, true);
           } finally {
-            state.isProcessing = false;
+            state.processingButtons.delete(`${memberUsername}-removeAdmin`);
             updateUIState();
           }
         }
 
         function showTyping(sender, isTyping) {
-          if (
-            !sender ||
-            sender === state.username ||
-            !state.targetId ||
-            sender !== state.targetId ||
-            elements.isGroup.checked
-          ) {
+          if (!sender || sender === state.username || !state.targetId || sender !== state.targetId || elements.isGroup.checked) {
             return;
           }
-          elements.typingStatus.textContent = isTyping
-            ? `${sanitizeInput(sender)} is typing...`
-            : "";
+          elements.typingStatus.textContent = isTyping ? `${sanitizeInput(sender)} is typing...` : "";
         }
 
         const debouncedSendTyping = debounce(() => {
-          if (
-            !state.isConnected ||
-            !state.socket ||
-            state.socket.readyState !== WebSocket.OPEN ||
-            !state.targetId ||
-            elements.isGroup.checked
-          ) {
+          if (!state.isConnected || !state.socket || state.socket.readyState !== WebSocket.OPEN || !state.targetId || elements.isGroup.checked) {
             return;
           }
 
@@ -1508,20 +1306,14 @@
 
         function sendTyping() {
           const messageInput = elements.messageInput.value.trim();
-          if (
-            !state.isConnected ||
-            !state.socket ||
-            state.socket.readyState !== WebSocket.OPEN ||
-            !messageInput
-          ) {
+          if (!state.isConnected || !state.socket || state.socket.readyState !== WebSocket.OPEN || !messageInput) {
             return;
           }
           debouncedSendTyping();
         }
 
         async function sendMessage() {
-          if (state.isProcessing)
-            return showToast("Another action is in progress", true);
+          if (state.isProcessing) return showToast("Another action is in progress", true);
           const content = elements.messageInput.value.trim();
           if (!content) {
             showError("messageInput", "Message cannot be empty");
@@ -1579,14 +1371,12 @@
 
         // Event Listeners
         function initEventListeners() {
-          ["username", "groupName", "targetId", "addMemberUsername"].forEach(
-            (id) => {
-              document.getElementById(id).addEventListener("input", () => {
-                clearError(id);
-                updateUIState();
-              });
-            }
-          );
+          ["username", "groupName", "targetId", "addMemberUsername"].forEach((id) => {
+            document.getElementById(id).addEventListener("input", () => {
+              clearError(id);
+              updateUIState();
+            });
+          });
 
           elements.messageInput.addEventListener("input", () => {
             clearError("messageInput");
@@ -1597,10 +1387,7 @@
           elements.isGroup.addEventListener("change", () => {
             updateUIState();
             const isGroupChecked = elements.isGroup.checked;
-            elements.groupManagement.classList.toggle(
-              "hidden",
-              !isGroupChecked
-            );
+            elements.groupManagement.classList.toggle("hidden", !isGroupChecked);
             if (!isGroupChecked) {
               state.currentGroup = null;
               elements.groupMembers.innerHTML = "";
