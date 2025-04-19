@@ -598,7 +598,8 @@
                           groupUpdateType
                         )
                       ) {
-                        await updateGroupMembers();
+                        // Force immediate group member list refresh
+                        await updateGroupMembers(true);
                       }
                       if (
                         groupUpdateType === "kick" &&
@@ -1070,13 +1071,16 @@
           }
         }
 
-        async function updateGroupMembers() {
+        async function updateGroupMembers(forceRefresh = false) {
           if (!state.currentGroup || !state.isConnected) {
             elements.groupMembers.innerHTML = "";
             return;
           }
 
           try {
+            // Show loading indicator
+            elements.loading.classList.remove("hidden");
+
             const res = await fetch(
               `${API_BASE}/groups/${encodeURIComponent(state.currentGroup)}`
             );
@@ -1177,6 +1181,8 @@
           } catch (err) {
             showToast(`Error fetching group members: ${err.message}`, true);
             elements.groupMembers.innerHTML = `<p class="text-red-500">Could not load members.</p>`;
+          } finally {
+            elements.loading.classList.add("hidden");
           }
         }
 
