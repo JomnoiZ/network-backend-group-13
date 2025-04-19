@@ -17,6 +17,7 @@ type userService struct {
 
 type UserService interface {
     GetUser(userID string) (*models.User, error)
+    GetAllUsers() (*models.User, error)
     CreateUser(user *models.User) (*models.User, error)
     ListOnlineUsers() ([]*models.User, error)
     ListUserGroups(userID string) ([]*models.Group, error)
@@ -33,6 +34,10 @@ func NewUserService(userRepo database.UserRepository, messageRepo database.Messa
 
 func (s *userService) GetUser(userID string) (*models.User, error) {
     return s.userRepository.GetUser(userID)
+}
+
+func (s *userService) GetAllUsers() (*models.User, error) {
+    return s.userRepository.GetAllUser()
 }
 
 func (s *userService) CreateUser(user *models.User) (*models.User, error) {

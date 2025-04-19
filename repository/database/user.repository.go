@@ -31,6 +31,19 @@ func (r *mongoUserRepository) GetUser(userID string) (*models.User, error) {
 	return &user, nil
 }
 
+func (r *mongoUserRepository) GetAllUser() (*models.User, error) {
+	ctx := context.Background()
+	var user models.User
+	err := r.collection.FindOne(ctx, bson.M{}).Decode(&user)
+	if err == mongo.ErrNoDocuments {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 func (r *mongoUserRepository) CreateUser(user *models.User) (*models.User, error) {
 	ctx := context.Background()
 	user.CreatedAt = time.Now()

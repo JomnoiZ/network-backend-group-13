@@ -14,6 +14,9 @@
         background-color: #f1f5f9;
         align-self: flex-start;
       }
+      .status-message {
+        background-color: #f3f4f6;
+      }
       .toast {
         transition: opacity 0.3s ease, transform 0.3s ease;
       }
@@ -21,7 +24,8 @@
         opacity: 0;
         transform: translateY(-10px);
       }
-      #messages {
+      #messages,
+      #status-log {
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
@@ -53,6 +57,13 @@
           width: 100%;
         }
       }
+      .user-status-online {
+        color: green;
+        font-weight: bold;
+      }
+      .user-status-offline {
+        color: gray;
+      }
     </style>
   </head>
   <body class="bg-gray-100 font-sans text-gray-800">
@@ -69,48 +80,62 @@
           <h2 class="text-lg font-semibold mb-4">User Setup</h2>
           <div class="space-y-3">
             <div>
-              <label for="userId" class="block text-sm font-medium"
-                >User ID</label
-              >
-              <input
-                id="userId"
-                class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g., user1"
-              />
-            </div>
-            <div>
               <label for="username" class="block text-sm font-medium"
                 >Username</label
               >
               <input
                 id="username"
                 class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g., Alice"
+                placeholder="e.g., Alice (This is your unique ID)"
               />
             </div>
-            <div class="flex gap-2">
+            <div id="auth-buttons" class="flex gap-2">
               <button
                 id="registerUser"
                 onclick="registerUser()"
                 class="flex-1 bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
-                title="Enter User ID and Username to register"
+                title="Enter Username to register"
               >
                 Register
               </button>
               <button
+                id="loginUser"
+                onclick="loginUser()"
+                class="flex-1 bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
+                title="Enter Username to login"
+              >
+                Login
+              </button>
+              <button
+                id="logoutUser"
+                onclick="logoutUser()"
+                class="flex-1 bg-red-500 text-white p-2 rounded hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 hidden"
+                title="Log out and disconnect"
+              >
+                Logout
+              </button>
+            </div>
+            <div>
+              <button
                 id="connect"
                 onclick="connect()"
-                class="flex-1 bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
+                class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
                 disabled
-                title="Register first to connect"
+                title="Register or login first to connect"
               >
                 Connect
               </button>
             </div>
           </div>
-          <h2 class="text-lg font-semibold mt-6 mb-4">Online Users</h2>
+          <h2 class="text-lg font-semibold mt-6 mb-4">Status Log</h2>
           <div
-            id="online-users"
+            id="status-log"
+            class="space-y-2 max-h-40 overflow-y-auto p-2 border rounded bg-gray-50"
+            aria-live="polite"
+          ></div>
+          <h2 class="text-lg font-semibold mt-6 mb-4">All Users</h2>
+          <div
+            id="all-users"
             class="space-y-2 max-h-40 overflow-y-auto"
             aria-live="polite"
           ></div>
@@ -156,13 +181,13 @@
           </div>
           <div class="mb-4">
             <label for="targetId" class="block text-sm font-medium"
-              >Chat With (User/Group ID)</label
+              >Chat With (Username / Group ID)</label
             >
             <div class="flex items-center gap-2">
               <input
                 id="targetId"
                 class="flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g., user2 or group1"
+                placeholder="e.g., bob or group1"
                 disabled
                 title="Register and connect to select a chat"
               />
@@ -187,7 +212,7 @@
               <input
                 id="addMemberId"
                 class="flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="User ID"
+                placeholder="Username"
                 disabled
                 title="Select a group to add members"
               />
@@ -196,7 +221,7 @@
                 onclick="addMember()"
                 class="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
                 disabled
-                title="Enter a user ID to add"
+                title="Enter a username to add"
               >
                 Add
               </button>
@@ -244,14 +269,18 @@
 
     <script>
       let socket;
-      let userId, username, targetId;
-      let currentGroup = null;
+      // userId now holds the username
+      let userId = null;
+      let targetId = null; // Can be a username or group ID
+      let currentGroup = null; // Group ID if chatting in a group
       let displayedMessages = new Set();
       let isTypingSent = false;
-      let isRegistered = false;
+      let isRegistered = false; // More like 'isLoggedIn' now
       let isConnected = false;
       let typingTimeout = null;
       let currentChatName = "";
+      let allUsersCache = []; // Cache for all users
+      let onlineUsersCache = new Set(); // Cache for online usernames
 
       // Debounce function for typing
       function debounce(func, wait) {
@@ -281,46 +310,61 @@
 
       // Update UI state
       function updateUIState() {
-        document.getElementById("userId").disabled = isRegistered;
-        document.getElementById("username").disabled = isRegistered;
+        const isSignedIn = isRegistered;
+        // Username input disabled only after successful login/register
+        document.getElementById("username").disabled = isSignedIn;
+        const usernameEntered = document
+          .getElementById("username")
+          .value.trim();
+
         document.getElementById("registerUser").disabled =
-          isRegistered ||
-          !document.getElementById("userId").value.trim() ||
-          !document.getElementById("username").value.trim();
+          isSignedIn || !usernameEntered;
+        document.getElementById("loginUser").disabled =
+          isSignedIn || !usernameEntered;
+        document.getElementById("logoutUser").disabled = !isSignedIn;
+
+        document
+          .getElementById("registerUser")
+          .classList.toggle("hidden", isSignedIn);
+        document
+          .getElementById("loginUser")
+          .classList.toggle("hidden", isSignedIn);
+        document
+          .getElementById("logoutUser")
+          .classList.toggle("hidden", !isSignedIn);
+
         document.getElementById("connect").disabled =
-          !isRegistered || isConnected;
+          !isSignedIn || isConnected;
         document.getElementById("groupName").disabled =
-          !isRegistered || !isConnected;
+          !isSignedIn || !isConnected;
         document.getElementById("createGroup").disabled =
-          !isRegistered ||
+          !isSignedIn ||
           !isConnected ||
           !document.getElementById("groupName").value.trim();
+
+        const targetSelected = document.getElementById("targetId").value.trim();
         document.getElementById("targetId").disabled =
-          !isRegistered || !isConnected;
+          !isSignedIn || !isConnected;
         document.getElementById("isGroup").disabled =
-          !isRegistered || !isConnected;
+          !isSignedIn || !isConnected;
         document.getElementById("messageInput").disabled =
-          !isRegistered ||
-          !isConnected ||
-          !document.getElementById("targetId").value.trim();
+          !isSignedIn || !isConnected || !targetSelected;
         document.getElementById("sendMessage").disabled =
-          !isRegistered ||
+          !isSignedIn ||
           !isConnected ||
-          !document.getElementById("targetId").value.trim() ||
+          !targetSelected ||
           !document.getElementById("messageInput").value.trim();
+
         document.getElementById("addMemberId").disabled =
-          !isRegistered || !isConnected || !currentGroup;
+          !isSignedIn || !isConnected || !currentGroup;
         document.getElementById("addMember").disabled =
-          !isRegistered ||
+          !isSignedIn ||
           !isConnected ||
           !currentGroup ||
           !document.getElementById("addMemberId").value.trim();
       }
 
       // Update inputs on change
-      document
-        .getElementById("userId")
-        .addEventListener("input", updateUIState);
       document
         .getElementById("username")
         .addEventListener("input", updateUIState);
@@ -336,104 +380,227 @@
       document
         .getElementById("addMemberId")
         .addEventListener("input", updateUIState);
+      document.getElementById("isGroup").addEventListener("change", () => {
+        // When checkbox changes, re-evaluate if chat is possible
+        updateUIState();
+        // Also reset group management if unchecked
+        const isGroupChecked = document.getElementById("isGroup").checked;
+        document
+          .getElementById("group-management")
+          .classList.toggle("hidden", !isGroupChecked);
+        if (!isGroupChecked) {
+          currentGroup = null;
+          document.getElementById("group-members").innerHTML = "";
+        } else if (document.getElementById("targetId").value.trim()) {
+          // If checked and targetId has value, treat it as group join
+          joinGroup(document.getElementById("targetId").value.trim());
+        }
+      });
 
       async function registerUser() {
-        userId = document.getElementById("userId").value.trim();
-        username = document.getElementById("username").value.trim();
-        if (!userId || !username)
-          return showToast("Enter user ID and username", true);
+        // Use username as the user ID
+        const usernameInput = document.getElementById("username").value.trim();
+        if (!usernameInput) return showToast("Enter username", true);
+        userId = usernameInput; // Assign username to userId
 
         try {
           const res = await fetch("http://localhost:8080/users", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: userId, username }),
+            // Assuming backend expects username as the identifier now
+            body: JSON.stringify({ username: userId }),
           });
-          if (!res.ok)
-            throw new Error((await res.json()).error || "Failed to register");
+          // Handle potential conflict (user already exists) differently from other errors
+          if (res.status === 409) {
+            throw new Error("Username already exists. Try logging in.");
+          }
+          if (!res.ok) {
+            const errorData = await res.json();
+            throw new Error(
+              errorData.error || `Failed to register (${res.status})`
+            );
+          }
+
           isRegistered = true;
           updateUIState();
-          showToast("Registered successfully");
-          updateGroups();
+          showToast("Registered successfully as " + userId);
+          await updateAllUsers(); // Update user list after registration
+          await updateGroups();
         } catch (err) {
+          userId = null; // Reset userId on failure
           showToast(`Error: ${err.message}`, true);
         }
       }
 
+      async function loginUser() {
+        // Use username as the user ID
+        const usernameInput = document.getElementById("username").value.trim();
+        if (!usernameInput) return showToast("Enter username", true);
+        userId = usernameInput; // Assign username to userId
+
+        try {
+          // Verify user exists by trying to fetch their details
+          // Adjust endpoint to fetch by username
+          const userRes = await fetch(`http://localhost:8080/users/${userId}`);
+          if (!userRes.ok) {
+            if (userRes.status === 404)
+              throw new Error("Username not found. Try registering.");
+            throw new Error(`Failed to verify user (${userRes.status})`);
+          }
+          // No need to check password/username match here as we use username as ID
+
+          // No need to re-register if login implies user exists
+          isRegistered = true;
+          updateUIState();
+          showToast("Logged in successfully as " + userId);
+          await updateAllUsers(); // Update user list after login
+          await updateGroups();
+        } catch (err) {
+          userId = null; // Reset userId on failure
+          showToast(`Error: ${err.message}`, true);
+        }
+      }
+
+      function logoutUser() {
+        if (socket) {
+          socket.close();
+          socket = null;
+        }
+        isRegistered = false;
+        isConnected = false;
+        userId = null;
+        targetId = null;
+        currentGroup = null;
+        displayedMessages.clear();
+        allUsersCache = [];
+        onlineUsersCache.clear();
+
+        document.getElementById("username").value = "";
+        document.getElementById("targetId").value = "";
+        document.getElementById("groupName").value = "";
+        document.getElementById("addMemberId").value = "";
+        document.getElementById("messages").innerHTML = "";
+        document.getElementById("status-log").innerHTML = "";
+        document.getElementById("all-users").innerHTML = ""; // Clear all users list
+        document.getElementById("groups").innerHTML = "";
+        document.getElementById("group-members").innerHTML = "";
+        document.getElementById("chat-context").textContent = "";
+        document.getElementById("typing-status").textContent = "";
+        document.getElementById("group-management").classList.add("hidden");
+        updateUIState();
+        showToast("Logged out successfully");
+      }
+
       async function connect() {
-        userId = document.getElementById("userId").value.trim();
-        if (!userId) return showToast("Enter your user ID", true);
+        // userId already holds the username from login/register
+        if (!userId) return showToast("Please log in or register first", true);
 
         if (socket) socket.close();
+        // Connect using username as the ID
         socket = new WebSocket(`ws://localhost:8080/ws?id=${userId}`);
 
-        socket.onopen = () => {
+        socket.onopen = async () => {
           isConnected = true;
           updateUIState();
           showToast("Connected");
-          updateOnlineUsers();
-          updateGroups();
-          sendTyping();
+          appendStatusMessage(`Connected as ${userId}`, "text-green-600");
+          await updateAllUsers(); // Fetch and display users with status
+          await updateGroups();
+          sendTyping(); // Send initial typing status if needed
         };
 
-        socket.onmessage = (event) => {
+        socket.onmessage = async (event) => {
           const msg = JSON.parse(event.data);
           console.log("Received:", msg);
 
-          if (msg.type === "message") {
-            if (!displayedMessages.has(msg.id)) {
-              displayedMessages.add(msg.id);
-              appendMessage(
-                `[${msg.sender_id}] ${msg.content}`,
-                msg.id,
-                msg.sender_id === userId ? "message-own" : "message-other"
+          switch (msg.type) {
+            case "message":
+              if (!displayedMessages.has(msg.id)) {
+                displayedMessages.add(msg.id);
+                // Display sender_id which should be the username
+                appendMessage(
+                  `[${msg.sender_id}] ${msg.content}`,
+                  msg.id,
+                  msg.sender_id === userId ? "message-own" : "message-other"
+                );
+              }
+              break;
+            case "typing":
+              // Show typing status with sender's username
+              showTyping(msg.sender_id, msg.status === "start");
+              break;
+            case "status":
+              // Handle user online/offline status updates
+              appendStatusMessage(
+                `${msg.sender_id} is ${msg.status}`,
+                "text-gray-500"
               );
-            }
-          } else if (msg.type === "typing") {
-            showTyping(msg.sender_id, msg.status === "start");
-          } else if (msg.type === "status") {
-            appendMessage(
-              `[STATUS] ${msg.sender_id} is ${msg.status}`,
-              "",
-              "text-gray-500"
-            );
-            updateOnlineUsers();
-          } else if (msg.type === "group_update") {
-            const { type, data } = msg.data;
-            appendMessage(
-              `[GROUP] ${type}: ${JSON.stringify(data)}`,
-              "",
-              "text-green-600"
-            );
-            if (msg.group_id === currentGroup) updateGroupMembers();
-            updateGroups();
+              // Update the all users list to reflect the change
+              if (msg.status === "online") {
+                onlineUsersCache.add(msg.sender_id);
+              } else {
+                onlineUsersCache.delete(msg.sender_id);
+              }
+              renderAllUsers(); // Re-render the list with updated status
+              break;
+            case "group_update":
+              const { type: groupUpdateType, data: groupUpdateData } = msg.data;
+              appendMessage(
+                `[GROUP/${msg.group_id}] ${groupUpdateType}: ${JSON.stringify(
+                  groupUpdateData
+                )}`,
+                "",
+                "text-blue-600 status-message" // Style as status message
+              );
+              if (msg.group_id === currentGroup) await updateGroupMembers();
+              await updateGroups(); // Refresh user's group list
+              break;
+            case "error": // Handle specific errors from WebSocket
+              showToast(
+                `WebSocket Error: ${msg.message || "Unknown error"}`,
+                true
+              );
+              break;
+            default:
+              console.log("Received unknown message type:", msg.type);
           }
         };
 
         socket.onclose = () => {
+          appendStatusMessage(`Disconnected`, "text-red-600");
           isConnected = false;
+          onlineUsersCache.clear(); // Clear online status on disconnect
+          renderAllUsers(); // Update UI to show all as offline
           updateUIState();
-          showToast("Disconnected, reconnecting...");
+          showToast("Disconnected", true);
           document.getElementById("group-management").classList.add("hidden");
-          document.getElementById("loading").classList.remove("hidden");
-          setTimeout(connect, 3000);
+          // Optional: Add automatic reconnection logic here if desired
+          // document.getElementById("loading").classList.remove("hidden");
+          // setTimeout(connect, 5000); // Example reconnect attempt
         };
 
-        socket.onerror = () => {
-          showToast("WebSocket error", true);
+        socket.onerror = (error) => {
+          console.error("WebSocket Error:", error);
+          showToast("WebSocket connection error", true);
+          isConnected = false;
+          onlineUsersCache.clear();
+          renderAllUsers();
+          updateUIState();
         };
       }
 
       async function createGroup() {
         const groupName = document.getElementById("groupName").value.trim();
+        // userId holds the creator's username
         if (!groupName || !userId)
-          return showToast("Enter group name and ensure registered", true);
+          return showToast("Enter group name and ensure logged in", true);
 
         try {
           document.getElementById("createGroup").disabled = true;
           const res = await fetch("http://localhost:8080/groups", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            // Send owner_id as the username
             body: JSON.stringify({ name: groupName, owner_id: userId }),
           });
           if (!res.ok)
@@ -441,66 +608,155 @@
               (await res.json()).error || "Failed to create group"
             );
           const group = await res.json();
-          appendMessage(
-            `[GROUP] Created group ${group.name} (${group.id})`,
-            "",
+          appendStatusMessage(
+            // Log group creation in status log
+            `Created group ${group.name} (${group.id})`,
             "text-green-600"
           );
-          updateGroups();
+          await updateGroups(); // Refresh the group list
           document.getElementById("groupName").value = "";
           showToast("Group created");
         } catch (err) {
           showToast(`Error: ${err.message}`, true);
         } finally {
-          document.getElementById("createGroup").disabled = false;
-          updateUIState();
+          // Ensure button is re-enabled regardless of success/failure
+          updateUIState(); // Re-evaluates disable state based on input value etc.
         }
       }
 
-      async function updateOnlineUsers() {
-        try {
-          const res = await fetch("http://localhost:8080/users/online");
-          const users = await res.json();
-          const el = document.getElementById("online-users");
-          el.innerHTML = users
-            .map(
-              (u) => `
-            <div class="flex items-center justify-between p-2 hover:bg-gray-100 rounded">
-              <span>${u.username} (${u.id})</span>
-              <button onclick="startChat('${u.id}', false)" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">Chat</button>
-            </div>
-          `
-            )
-            .join("");
-        } catch (err) {
-          showToast(`Error fetching online users: ${err.message}`, true);
+      // Fetches all users and online users, then renders the combined list
+      async function updateAllUsers() {
+        if (!isConnected) {
+          // If not connected, attempt to fetch all users but mark all as offline
+          try {
+            const allRes = await fetch("http://localhost:8080/users");
+            if (!allRes.ok) throw new Error("Failed to fetch all users");
+            allUsersCache = await allRes.json();
+            onlineUsersCache.clear(); // Ensure no one is marked online
+            renderAllUsers();
+          } catch (err) {
+            showToast(`Error fetching users: ${err.message}`, true);
+            document.getElementById(
+              "all-users"
+            ).innerHTML = `<p class="text-red-500">Could not load users.</p>`;
+          }
+          return;
         }
+
+        // If connected, fetch both lists
+        try {
+          const [allRes, onlineRes] = await Promise.all([
+            fetch("http://localhost:8080/users"), // Endpoint for ALL users
+            fetch("http://localhost:8080/users/online"), // Endpoint for ONLINE users
+          ]);
+
+          if (!allRes.ok) throw new Error("Failed to fetch all users");
+          if (!onlineRes.ok) throw new Error("Failed to fetch online users");
+
+          allUsersCache = await allRes.json();
+          const onlineUsers = await onlineRes.json();
+
+          onlineUsersCache.clear();
+          // Assume onlineUsers list contains objects with an 'id' (username) field
+          onlineUsers.forEach((u) => onlineUsersCache.add(u.id));
+
+          renderAllUsers();
+        } catch (err) {
+          showToast(`Error updating user list: ${err.message}`, true);
+          document.getElementById(
+            "all-users"
+          ).innerHTML = `<p class="text-red-500">Could not load users.</p>`;
+        }
+      }
+
+      // Renders the "All Users" list based on cached data
+      function renderAllUsers() {
+        const el = document.getElementById("all-users");
+        if (!allUsersCache || allUsersCache.length === 0) {
+          el.innerHTML = "<p>No users found.</p>";
+          return;
+        }
+
+        el.innerHTML = allUsersCache
+          .map((u) => {
+            // Assume 'u.id' is the username based on backend response structure
+            const isOnline = onlineUsersCache.has(u.id);
+            const statusClass = isOnline
+              ? "user-status-online"
+              : "user-status-offline";
+            const statusText = isOnline ? "Online" : "Offline";
+            // Don't show chat button for the current user
+            const chatButton =
+              u.id !== userId
+                ? `<button onclick="startChat('${
+                    u.id
+                  }', false)" class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    !isConnected ? "hidden" : ""
+                  }">Chat</button>`
+                : "(You)";
+
+            return `
+                  <div class="flex items-center justify-between p-1 hover:bg-gray-100 rounded text-sm">
+                    <span>
+                        ${
+                          u.username || u.id
+                        } <span class="${statusClass}">(${statusText})</span>
+                    </span>
+                    ${chatButton}
+                  </div>
+                  `;
+          })
+          .join("");
       }
 
       async function updateGroups() {
-        if (!userId) return;
+        if (!userId || !isRegistered) return; // Need to be logged in
         try {
+          // Fetch groups for the current user (identified by username)
           const res = await fetch(
             `http://localhost:8080/users/${userId}/groups`
           );
+          if (!res.ok) {
+            // If user has no groups, API might return 404 or empty list. Handle gracefully.
+            if (res.status === 404) {
+              document.getElementById("groups").innerHTML =
+                "<p>No groups joined.</p>";
+              return;
+            }
+            throw new Error(`Failed to fetch groups (${res.status})`);
+          }
           const groups = await res.json();
           const el = document.getElementById("groups");
+          if (!groups || groups.length === 0) {
+            el.innerHTML = "<p>No groups joined.</p>";
+            return;
+          }
+
           el.innerHTML = groups
             .map(
               (g) => `
-            <div class="flex items-center justify-between p-2 hover:bg-gray-100 rounded">
-              <span>${g.name} (${g.id})</span>
-              <button onclick="joinGroup('${g.id}')" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">Chat</button>
-            </div>
-          `
+              <div class="flex items-center justify-between p-2 hover:bg-gray-100 rounded">
+                <span>${g.name} (${g.id})</span>
+                <button onclick="joinGroup('${
+                  g.id
+                }')" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                !isConnected ? "hidden" : ""
+              }" ${!isConnected ? "disabled" : ""}>Chat</button>
+              </div>
+            `
             )
             .join("");
         } catch (err) {
           showToast(`Error fetching groups: ${err.message}`, true);
+          document.getElementById(
+            "groups"
+          ).innerHTML = `<p class="text-red-500">Could not load groups.</p>`;
         }
       }
 
       async function joinGroup(groupId) {
+        if (!isConnected)
+          return showToast("Connect first to join a group", true);
         currentGroup = groupId;
         document.getElementById("targetId").value = groupId;
         document.getElementById("isGroup").checked = true;
@@ -509,173 +765,209 @@
           socket.send(
             JSON.stringify({
               type: "join_group",
-              sender_id: userId,
+              sender_id: userId, // Send username
               group_id: groupId,
             })
           );
         }
-        appendMessage(`[GROUP] Joined group ${groupId}`, "", "text-green-600");
+        appendStatusMessage(`Joined group chat ${groupId}`, "text-blue-600");
         await updateGroupMembers();
         await loadMessageHistory(groupId, true);
-        updateChatHeader(groupId, true);
-        sendTyping();
+        await updateChatHeader(groupId, true); // Update header after loading
+        sendTyping(); // Send typing status for the new context
+        updateUIState(); // Ensure buttons related to group mgmt are enabled
       }
 
       async function updateGroupMembers() {
-        if (!currentGroup) return;
+        if (!currentGroup || !isConnected) return;
         try {
           const res = await fetch(
             `http://localhost:8080/groups/${currentGroup}`
           );
+          if (!res.ok)
+            throw new Error(`Failed to fetch group details (${res.status})`);
           const group = await res.json();
-          const isOwner = group.owner_id === userId;
-          const isAdmin = group.admins.includes(userId);
+          const isOwner = group.owner_id === userId; // Compare with current user's username
+          // Ensure admins list exists and check if current user's username is in it
+          const isAdmin = group.admins && group.admins.includes(userId);
 
-          const memberDetails = await Promise.all(
-            group.members.map(async (memberId) => {
-              try {
-                const userRes = await fetch(
-                  `http://localhost:8080/users/${memberId}`
-                );
-                if (!userRes.ok) return { id: memberId, username: memberId };
-                const user = await userRes.json();
-                return { id: memberId, username: user.username || memberId };
-              } catch {
-                return { id: memberId, username: memberId };
-              }
-            })
-          );
+          // Fetch usernames for member IDs (which are usernames) if needed,
+          // but often the ID itself is the username now. Backend might return full user objects.
+          // Assuming group.members is a list of usernames.
+          const memberUsernames = group.members || [];
+          const adminUsernames = new Set(group.admins || []);
 
           const el = document.getElementById("group-members");
-          el.innerHTML = memberDetails
-            .map(
-              (member) => `
-            <div class="flex items-center justify-between p-2 hover:bg-gray-100 rounded">
-              <span>
-                ${member.username} (${member.id})
-                ${group.admins.includes(member.id) ? " (Admin)" : ""}
-                ${member.id === group.owner_id ? " (Owner)" : ""}
-              </span>
-              <div class="space-x-2">
-                ${
-                  (isOwner || isAdmin) && member.id !== userId
-                    ? `
-                  <button onclick="kickMember('${member.id}')" class="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500">Kick</button>
-                `
-                    : ""
-                }
-                ${
-                  isOwner && member.id !== userId
-                    ? `
-                  ${
-                    group.admins.includes(member.id)
-                      ? `<button onclick="removeAdmin('${member.id}')" class="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500">Remove Admin</button>`
-                      : `<button onclick="addAdmin('${member.id}')" class="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500">Make Admin</button>`
-                  }
-                `
-                    : ""
-                }
-              </div>
-            </div>
-          `
-            )
+          el.innerHTML = memberUsernames
+            .map((memberUsername) => {
+              const memberIsAdmin = adminUsernames.has(memberUsername);
+              const memberIsOwner = memberUsername === group.owner_id;
+
+              // Determine actions based on current user's role (owner/admin)
+              const showKick =
+                (isOwner || isAdmin) && memberUsername !== userId;
+              const showAdminToggle = isOwner && memberUsername !== userId;
+
+              return `
+                <div class="flex items-center justify-between p-1 hover:bg-gray-100 rounded text-sm">
+                  <span>
+                    ${memberUsername}
+                    ${memberIsAdmin ? " (Admin)" : ""}
+                    ${memberIsOwner ? " (Owner)" : ""}
+                  </span>
+                  <div class="space-x-1">
+                    ${
+                      showKick
+                        ? `
+                      <button onclick="kickMember('${memberUsername}')" class="bg-red-500 text-white px-1 py-0.5 rounded text-xs hover:bg-red-600 focus:outline-none focus:ring-1 focus:ring-red-500">Kick</button>
+                    `
+                        : ""
+                    }
+                    ${
+                      showAdminToggle
+                        ? `
+                      ${
+                        memberIsAdmin
+                          ? `<button onclick="removeAdmin('${memberUsername}')" class="bg-yellow-500 text-white px-1 py-0.5 rounded text-xs hover:bg-yellow-600 focus:outline-none focus:ring-1 focus:ring-yellow-500">Remove Admin</button>`
+                          : `<button onclick="addAdmin('${memberUsername}')" class="bg-green-500 text-white px-1 py-0.5 rounded text-xs hover:bg-green-600 focus:outline-none focus:ring-1 focus:ring-green-500">Make Admin</button>`
+                      }
+                    `
+                        : ""
+                    }
+                  </div>
+                </div>
+                `;
+            })
             .join("");
+          // Re-enable add member inputs after successfully loading members
+          updateUIState();
         } catch (err) {
           showToast(`Error fetching group members: ${err.message}`, true);
+          document.getElementById(
+            "group-members"
+          ).innerHTML = `<p class="text-red-500">Could not load members.</p>`;
+          // Disable add member inputs if loading fails
+          document.getElementById("addMemberId").disabled = true;
+          document.getElementById("addMember").disabled = true;
         }
       }
 
       async function addMember() {
-        const memberId = document.getElementById("addMemberId").value.trim();
-        if (!currentGroup || !memberId)
-          return showToast("Enter a user ID and select a group", true);
+        const memberUsername = document
+          .getElementById("addMemberId")
+          .value.trim();
+        if (!currentGroup || !memberUsername)
+          return showToast("Enter a username and select a group", true);
+        if (!isConnected) return showToast("Not connected", true);
 
         try {
-          const userRes = await fetch(
-            `http://localhost:8080/users/${memberId}`
+          // Optional: Validate if the user exists before trying to add
+          const userCheckRes = await fetch(
+            `http://localhost:8080/users/${memberUsername}`
           );
-          if (!userRes.ok) throw new Error("User not found");
+          if (!userCheckRes.ok) {
+            if (userCheckRes.status === 404)
+              throw new Error(`User '${memberUsername}' not found.`);
+            throw new Error(`Failed to verify user (${userCheckRes.status})`);
+          }
+
           const res = await fetch(
             `http://localhost:8080/groups/${currentGroup}/members`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ user_id: memberId, requester_id: userId }),
+              // Send username to add, and requester's username
+              body: JSON.stringify({
+                user_id: memberUsername,
+                requester_id: userId,
+              }),
             }
           );
           if (!res.ok)
             throw new Error((await res.json()).error || "Failed to add member");
-          appendMessage(
-            `[GROUP] Added ${memberId} to group`,
-            "",
+
+          appendStatusMessage(
+            // Use status log
+            `Added ${memberUsername} to group ${currentGroup}`,
             "text-green-600"
           );
-          updateGroupMembers();
+          await updateGroupMembers(); // Refresh member list
           document.getElementById("addMemberId").value = "";
           showToast("Member added");
         } catch (err) {
           showToast(`Error: ${err.message}`, true);
+        } finally {
+          updateUIState(); // Re-enable button if needed
         }
       }
 
-      async function kickMember(memberId) {
+      async function kickMember(memberUsername) {
+        if (!isConnected) return showToast("Not connected", true);
+        if (!confirm(`Are you sure you want to kick ${memberUsername}?`))
+          return;
+
         try {
+          // API endpoint uses member username, requester username in query param
           const res = await fetch(
-            `http://localhost:8080/groups/${currentGroup}/members/${memberId}?requester_id=${userId}`,
+            `http://localhost:8080/groups/${currentGroup}/members/${memberUsername}?requester_id=${userId}`,
             { method: "DELETE" }
           );
           if (!res.ok)
             throw new Error(
               (await res.json()).error || "Failed to kick member"
             );
-          appendMessage(
-            `[GROUP] Kicked ${memberId} from group`,
-            "",
-            "text-green-600"
+          appendStatusMessage(
+            // Use status log
+            `Kicked ${memberUsername} from group ${currentGroup}`,
+            "text-orange-600"
           );
-          updateGroupMembers();
+          await updateGroupMembers(); // Refresh list
           showToast("Member kicked");
         } catch (err) {
           showToast(`Error: ${err.message}`, true);
         }
       }
 
-      async function addAdmin(memberId) {
+      async function addAdmin(memberUsername) {
+        if (!isConnected) return showToast("Not connected", true);
         try {
+          // API endpoint uses member username, requester username in query param
           const res = await fetch(
-            `http://localhost:8080/groups/${currentGroup}/admins/${memberId}?requester_id=${userId}`,
-            { method: "PUT" }
+            `http://localhost:8080/groups/${currentGroup}/admins/${memberUsername}?requester_id=${userId}`,
+            { method: "PUT" } // Assuming PUT promotes to admin
           );
           if (!res.ok)
             throw new Error((await res.json()).error || "Failed to add admin");
-          appendMessage(
-            `[GROUP] Made ${memberId} an admin`,
-            "",
+          appendStatusMessage(
+            // Use status log
+            `Made ${memberUsername} an admin in group ${currentGroup}`,
             "text-green-600"
           );
-          updateGroupMembers();
+          await updateGroupMembers(); // Refresh list
           showToast("Admin added");
         } catch (err) {
           showToast(`Error: ${err.message}`, true);
         }
       }
 
-      async function removeAdmin(memberId) {
+      async function removeAdmin(memberUsername) {
+        if (!isConnected) return showToast("Not connected", true);
         try {
+          // API endpoint uses member username, requester username in query param
           const res = await fetch(
-            `http://localhost:8080/groups/${currentGroup}/admins/${memberId}?requester_id=${userId}`,
-            { method: "DELETE" }
+            `http://localhost:8080/groups/${currentGroup}/admins/${memberUsername}?requester_id=${userId}`,
+            { method: "DELETE" } // Assuming DELETE removes admin role
           );
           if (!res.ok)
             throw new Error(
               (await res.json()).error || "Failed to remove admin"
             );
-          appendMessage(
-            `[GROUP] Removed ${memberId} as admin`,
-            "",
-            "text-green-600"
+          appendStatusMessage(
+            // Use status log
+            `Removed ${memberUsername} as admin in group ${currentGroup}`,
+            "text-orange-600"
           );
-          updateGroupMembers();
+          await updateGroupMembers(); // Refresh list
           showToast("Admin removed");
         } catch (err) {
           showToast(`Error: ${err.message}`, true);
@@ -683,204 +975,327 @@
       }
 
       async function loadMessageHistory(id, isGroup) {
+        if (!isConnected) return; // Don't load if not connected
+
+        // id is either target username or group ID
+        targetId = id; // Store the current chat target
+        document.getElementById("loading").classList.remove("hidden");
+        document.getElementById("messages").innerHTML = ""; // Clear previous messages
+        displayedMessages.clear();
+
         try {
-          document.getElementById("loading").classList.remove("hidden");
           const url = isGroup
             ? `http://localhost:8080/groups/${id}/messages`
-            : `http://localhost:8080/users/${userId}/messages/${id}`;
+            : // User-to-user URL uses current user's username and target's username
+              `http://localhost:8080/users/${userId}/messages/${id}`;
+
           const res = await fetch(url);
-          if (!res.ok)
-            throw new Error(
-              (await res.json()).error || "Failed to load messages"
-            );
-          const messages = await res.json();
-          const div = document.getElementById("messages");
-          div.innerHTML = "";
-          displayedMessages.clear();
-          messages.forEach((msg) => {
-            if (!displayedMessages.has(msg.id)) {
-              displayedMessages.add(msg.id);
-              appendMessage(
-                `[${msg.sender_id}] ${msg.content}`,
-                msg.id,
-                msg.sender_id === userId ? "message-own" : "message-other"
+          if (!res.ok) {
+            // Handle 404 (no messages) gracefully
+            if (res.status === 404) {
+              appendStatusMessage(
+                "No messages found for this chat.",
+                "text-gray-500"
               );
+              return; // Exit function, no messages to display
             }
-          });
+            throw new Error(`Failed to load messages (${res.status})`);
+          }
+          const messages = await res.json();
+
+          if (!messages || messages.length === 0) {
+            appendStatusMessage(
+              "No messages in this chat yet.",
+              "text-gray-500"
+            );
+          } else {
+            messages.forEach((msg) => {
+              if (!displayedMessages.has(msg.id)) {
+                displayedMessages.add(msg.id);
+                // Display sender_id (username)
+                appendMessage(
+                  `[${msg.sender_id}] ${msg.content}`,
+                  msg.id,
+                  msg.sender_id === userId ? "message-own" : "message-other",
+                  msg.timestamp // Pass timestamp if available
+                );
+              }
+            });
+          }
         } catch (err) {
           showToast(`Error loading messages: ${err.message}`, true);
+          appendStatusMessage(
+            "Failed to load message history.",
+            "text-red-500"
+          );
         } finally {
           document.getElementById("loading").classList.add("hidden");
+          // Scroll to bottom after loading messages
+          const messagesDiv = document.getElementById("messages");
+          messagesDiv.scrollTop = messagesDiv.scrollHeight;
+          updateUIState(); // Enable message input etc.
         }
       }
 
       async function updateChatHeader(id, isGroup) {
+        // id is target username or group ID
         try {
+          let name = id; // Default to the ID
           if (isGroup) {
             const res = await fetch(`http://localhost:8080/groups/${id}`);
-            const group = await res.json();
-            currentChatName = group.name;
+            if (res.ok) {
+              const group = await res.json();
+              name = group.name || id; // Use group name or fallback to ID
+            }
+            currentChatName = name;
             document.getElementById(
               "chat-context"
-            ).textContent = `with ${group.name} (Group)`;
+            ).textContent = `with ${name} (Group)`;
           } else {
+            // Fetch user details to get the proper casing of the username if needed
             const res = await fetch(`http://localhost:8080/users/${id}`);
-            const user = await res.json();
-            currentChatName = user.username;
+            if (res.ok) {
+              const user = await res.json();
+              // Use username from response, fallback to the id (input username)
+              name = user.username || id;
+            }
+            currentChatName = name;
             document.getElementById(
               "chat-context"
-            ).textContent = `with ${user.username}`;
+            ).textContent = `with ${name}`;
           }
         } catch (err) {
-          document.getElementById("chat-context").textContent = `with ${id}`;
+          // Fallback if fetching details fails
+          console.error("Error fetching chat header details:", err);
+          document.getElementById("chat-context").textContent = `with ${id} ${
+            isGroup ? "(Group)" : ""
+          }`;
           currentChatName = id;
         }
       }
 
       async function startChat(id, isGroup) {
+        if (!isConnected) return showToast("Connect first to start chat", true);
+        if (id === userId) return showToast("Cannot chat with yourself", true); // Prevent self-chat
+
         document.getElementById("targetId").value = id;
         document.getElementById("isGroup").checked = isGroup;
         document
           .getElementById("group-management")
           .classList.toggle("hidden", !isGroup);
         currentGroup = isGroup ? id : null;
+
+        await updateChatHeader(id, isGroup); // Update header first
+
         if (isGroup) {
+          // JoinGroup handles loading messages and members for groups
           await joinGroup(id);
         } else {
-          await updateChatHeader(id, false);
+          // For direct user chat, load history directly
           await loadMessageHistory(id, false);
         }
-        sendTyping();
-        updateUIState();
+
+        sendTyping(); // Send typing status for the new chat context
+        updateUIState(); // Ensure message input is enabled etc.
+        document.getElementById("messageInput").focus(); // Focus message input
       }
 
       function sendMessage() {
         const content = document.getElementById("messageInput").value.trim();
-        if (!content || !socket || socket.readyState !== WebSocket.OPEN) {
-          showToast(
-            "Cannot send message: Not connected or empty message",
-            true
-          );
-          return;
-        }
-
+        const currentTargetId = document
+          .getElementById("targetId")
+          .value.trim();
         const isGroup = document.getElementById("isGroup").checked;
-        targetId = document.getElementById("targetId").value.trim();
-        if (!targetId) {
-          showToast("Please specify a user or group to chat with", true);
-          return;
-        }
 
-        const messageId = crypto.randomUUID();
+        if (!content || !currentTargetId)
+          return showToast("Enter message and target", true);
+        if (!socket || socket.readyState !== WebSocket.OPEN)
+          return showToast("Not connected", true);
+
         const message = {
           type: "message",
-          sender_id: userId,
-          [isGroup ? "group_id" : "receiver_id"]: targetId,
-          content,
-          id: messageId,
+          sender_id: userId, // Sender's username
+          content: content,
+          timestamp: new Date().toISOString(),
         };
 
-        socket.send(JSON.stringify(message));
-        if (!displayedMessages.has(messageId)) {
-          displayedMessages.add(messageId);
-          appendMessage(`[${userId}] ${content}`, messageId, "message-own");
-        }
-        document.getElementById("messageInput").value = "";
-        sendTyping();
-        updateUIState();
-      }
-
-      const debouncedSendTyping = debounce(() => {
-        if (!socket || socket.readyState !== WebSocket.OPEN || !userId) return;
-        targetId = document.getElementById("targetId").value.trim();
-        if (!targetId) return;
-
-        const content = document.getElementById("messageInput").value.trim();
-        const shouldBeTyping = content.length > 0;
-
-        if (shouldBeTyping && !isTypingSent) {
-          socket.send(
-            JSON.stringify({
-              type: "typing",
-              sender_id: userId,
-              [document.getElementById("isGroup").checked
-                ? "group_id"
-                : "receiver_id"]: targetId,
-              status: "start",
-            })
-          );
-          isTypingSent = true;
-        } else if (!shouldBeTyping && isTypingSent) {
-          socket.send(
-            JSON.stringify({
-              type: "typing",
-              sender_id: userId,
-              [document.getElementById("isGroup").checked
-                ? "group_id"
-                : "receiver_id"]: targetId,
-              status: "stop",
-            })
-          );
-          isTypingSent = false;
-        }
-      }, 300);
-
-      function sendTyping() {
-        debouncedSendTyping();
-      }
-
-      function appendMessage(msg, messageId = "", className = "") {
-        const div = document.getElementById("messages");
-        const el = document.createElement("div");
-        el.className = `p-2 rounded max-w-[80%] ${className}`;
-        el.textContent = msg;
-        if (messageId) el.dataset.messageId = messageId;
-        div.appendChild(el);
-        div.scrollTop = div.scrollHeight;
-      }
-
-      function showTyping(user, isTyping) {
-        const typingStatus = document.getElementById("typing-status");
-        if (user === userId) return; // Don't show own typing
-        if (isTyping) {
-          typingStatus.textContent = `${user} is typing...`;
+        if (isGroup) {
+          message.group_id = currentTargetId; // Target is a group ID
         } else {
-          typingStatus.textContent = "";
+          message.recipient_id = currentTargetId; // Target is a username
         }
+
+        socket.send(JSON.stringify(message));
+
+        // Optimistically display the sent message
+        // Use a temporary local ID for display until confirmed? Or just display directly.
+        // Let's display directly for simplicity, assuming successful delivery.
+        appendMessage(
+          `[${userId}] ${content}`, // Display sender's username
+          `local-${Date.now()}`, // Temporary local ID for the set
+          "message-own",
+          message.timestamp
+        );
+
+        document.getElementById("messageInput").value = "";
+        sendTyping(true); // Send typing finished immediately after sending
+        updateUIState(); // Disable send button if input is empty
+        // Scroll to bottom after sending
+        const messagesDiv = document.getElementById("messages");
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
       }
 
-      // Keyboard accessibility
-      document.addEventListener("keydown", (e) => {
-        if (
-          e.key === "Enter" &&
-          document.activeElement === document.getElementById("messageInput")
-        ) {
-          sendMessage();
+      // Function to send typing status
+      const sendTyping = debounce((isFinished = false) => {
+        if (!socket || socket.readyState !== WebSocket.OPEN || !targetId)
+          return;
+
+        const currentTargetId = document
+          .getElementById("targetId")
+          .value.trim();
+        if (!currentTargetId) return; // No target selected
+
+        const isGroup = document.getElementById("isGroup").checked;
+        const inputHasText =
+          document.getElementById("messageInput").value.trim().length > 0;
+
+        const shouldSendStart = !isFinished && inputHasText && !isTypingSent;
+        const shouldSendStop = (isFinished || !inputHasText) && isTypingSent;
+
+        let statusToSend = null;
+
+        if (shouldSendStart) {
+          statusToSend = "start";
+          isTypingSent = true; // Mark typing as started
+        } else if (shouldSendStop) {
+          statusToSend = "stop";
+          isTypingSent = false; // Mark typing as stopped
         }
-        if (
-          e.key === "Enter" &&
-          document.activeElement === document.getElementById("userId") &&
-          !isRegistered
-        ) {
-          registerUser();
+
+        if (statusToSend) {
+          const typingMsg = {
+            type: "typing",
+            sender_id: userId, // Sender's username
+            status: statusToSend,
+          };
+          if (isGroup) {
+            typingMsg.group_id = currentTargetId;
+          } else {
+            typingMsg.recipient_id = currentTargetId;
+          }
+          socket.send(JSON.stringify(typingMsg));
         }
-        if (
-          e.key === "Enter" &&
-          document.activeElement === document.getElementById("groupName")
-        ) {
-          createGroup();
-        }
-        if (
-          e.key === "Enter" &&
-          document.activeElement === document.getElementById("addMemberId")
-        ) {
-          addMember();
-        }
+      }, 500); // Debounce interval
+
+      // Clear any pending stop typing event when input happens
+      document.getElementById("messageInput").addEventListener("input", () => {
+        clearTimeout(typingTimeout); // Clear previous timeout if user continues typing
+        sendTyping(); // Send 'start' typing or extend existing typing status
+        // Set a timeout to automatically send 'stop' if no typing occurs for a while
+        typingTimeout = setTimeout(() => {
+          sendTyping(true); // Send 'stop' after inactivity
+        }, 3000); // e.g., 3 seconds of inactivity
       });
 
-      // Initialize UI state and show welcome message
-      updateUIState();
-      showToast("Welcome! Enter a User ID and Username to register.", false);
+      // Show typing indicator
+      function showTyping(senderUsername, isStarting) {
+        const typingDiv = document.getElementById("typing-status");
+        // Ignore typing notifications from self or if not chatting with the sender/group
+        const currentTargetId = document
+          .getElementById("targetId")
+          .value.trim();
+        const isGroupChat = document.getElementById("isGroup").checked;
+
+        // Check if the typing notification is relevant to the current chat
+        const isRelevant =
+          (isGroupChat && currentTargetId === currentGroup) || // Group chat matches current group OR
+          (!isGroupChat && senderUsername === currentTargetId); // Direct chat matches the sender
+
+        if (senderUsername === userId || !isRelevant) {
+          return;
+        }
+
+        if (isStarting) {
+          // Simple text indicator for now
+          typingDiv.textContent = `${senderUsername} is typing...`;
+        } else {
+          // If the current typing indicator is for this user, clear it
+          if (
+            typingDiv.textContent.startsWith(`${senderUsername} is typing...`)
+          ) {
+            typingDiv.textContent = "";
+          }
+        }
+      }
+
+      // Append message to the chat window
+      function appendMessage(text, id, className, timestamp) {
+        if (id && displayedMessages.has(id)) return; // Avoid duplicates by ID
+        if (id) displayedMessages.add(id);
+
+        const div = document.getElementById("messages");
+        const item = document.createElement("div");
+        item.className = `p-2 rounded max-w-[80%] break-words ${className}`;
+
+        // Add timestamp if available
+        let timeString = "";
+        if (timestamp) {
+          try {
+            timeString = new Date(timestamp).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+          } catch (e) {
+            console.error("Invalid timestamp format:", timestamp);
+          }
+        }
+
+        // Simple text display, replace [sender] pattern if needed later
+        item.textContent = text;
+        if (timeString) {
+          const timeEl = document.createElement("span");
+          timeEl.className = "text-xs text-gray-500 ml-2 block text-right";
+          timeEl.textContent = timeString;
+          item.appendChild(timeEl);
+        }
+
+        div.appendChild(item);
+        div.scrollTop = div.scrollHeight; // Scroll to bottom
+      }
+
+      // Append status message to the status log
+      function appendStatusMessage(text, className) {
+        const log = document.getElementById("status-log");
+        const item = document.createElement("div");
+        const time = new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+        item.className = `p-1 text-xs rounded status-message ${
+          className || "text-gray-600"
+        }`;
+        item.textContent = `[${time}] ${text}`;
+        log.appendChild(item);
+        log.scrollTop = log.scrollHeight; // Scroll to bottom
+      }
+
+      // Initial UI state setup on page load
+      document.addEventListener("DOMContentLoaded", () => {
+        updateUIState();
+        // Attempt to fetch all users on load, even if not connected, to show who exists
+        updateAllUsers();
+      });
+
+      // Handle enter key in message input
+      document
+        .getElementById("messageInput")
+        .addEventListener("keypress", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault(); // Prevent newline
+            sendMessage();
+          }
+        });
     </script>
   </body>
 </html>

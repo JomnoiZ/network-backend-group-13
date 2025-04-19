@@ -14,6 +14,7 @@ type userController struct {
 
 type UserController interface {
     GetUser(c *gin.Context)
+	GetAllUsers(c *gin.Context)
     CreateUser(c *gin.Context)
     ListOnlineUsers(c *gin.Context)
     ListUserGroups(c *gin.Context)
@@ -38,6 +39,19 @@ func (c *userController) GetUser(ctx *gin.Context) {
         return
     }
     ctx.JSON(http.StatusOK, user)
+}
+
+func (c *userController) GetAllUsers(ctx *gin.Context) {
+	user, err := c.userService.GetAllUsers()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if user == nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	ctx.JSON(http.StatusOK, user)
 }
 
 func (c *userController) CreateUser(ctx *gin.Context) {
