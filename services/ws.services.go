@@ -75,6 +75,7 @@ func (s *websocketService) HandleConnection(username string, conn *websocket.Con
 	go s.readPump(client)
 
 	s.broadcastStatus(username, "online")
+	log.Printf("User %s connected via WebSocket", username)
 }
 
 func (s *websocketService) GetClients() map[string]*models.Client {
@@ -162,7 +163,7 @@ func (s *websocketService) NotifyGroupUpdate(groupID string, updateType string, 
 
 	messageJSON, err := json.Marshal(message)
 	if err != nil {
-		log.Printf("Failed to marshal group update for group %s: %v", groupID, err)
+		log.Printf("Failed to marshal group update for group %s, type %s: %v", groupID, updateType, err)
 		return
 	}
 
@@ -174,6 +175,9 @@ func (s *websocketService) NotifyGroupUpdate(groupID string, updateType string, 
 		for _, client := range groupClients {
 			s.sendMessage(client, messageJSON)
 		}
+		log.Printf("Notified group %s of update type %s", groupID, updateType)
+	} else {
+		log.Printf("No clients found for group %s to notify update type %s", groupID, updateType)
 	}
 }
 
@@ -198,6 +202,7 @@ func (s *websocketService) broadcastStatus(username string, status string) {
 			s.sendMessage(client, messageJSON)
 		}
 	}
+	log.Printf("Broadcasted status %s for user %s", status, username)
 }
 
 func (s *websocketService) readPump(client *models.Client) {

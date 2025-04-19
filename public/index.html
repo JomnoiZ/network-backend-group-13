@@ -594,8 +594,9 @@
                     );
                     if (msg.group_id === state.currentGroup) {
                       if (
-                        groupUpdateType === "add" ||
-                        groupUpdateType === "kick"
+                        ["add", "kick", "add_admin", "remove_admin"].includes(
+                          groupUpdateType
+                        )
                       ) {
                         await updateGroupMembers();
                       }
@@ -1472,7 +1473,7 @@
               );
             }
             showToast(`Made ${sanitizeInput(username)} an admin`);
-            await updateGroupMembers();
+            // Group member list will be updated via WebSocket group_update
           } catch (err) {
             showToast(`Failed to add admin: ${err.message}`, true);
           } finally {
@@ -1524,7 +1525,7 @@
               );
             }
             showToast(`Removed admin status from ${sanitizeInput(username)}`);
-            await updateGroupMembers();
+            // Group member list will be updated via WebSocket group_update
           } catch (err) {
             showToast(`Failed to remove admin: ${err.message}`, true);
           } finally {
