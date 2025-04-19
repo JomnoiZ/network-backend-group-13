@@ -4,43 +4,45 @@ import (
 	"context"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"github.com/JomnoiZ/network-backend-group-13.git/models"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
-type firestoreGroupRepository struct {
-    client *firestore.Client
+type mongoGroupRepository struct {
+	collection *mongo.Collection
 }
 
-func NewFirestoreGroupRepository(client *firestore.Client) GroupRepository {
-    return &firestoreGroupRepository{client: client}
+func NewMongoGroupRepository(client *mongo.Client) GroupRepository {
+	collection := client.Database("chat").Collection("groups")
+	return &mongoGroupRepository{collection: collection}
 }
 
-func (r *firestoreGroupRepository) GetGroup(groupID string) (*models.Group, error) {
-    ctx := context.Background()
-    doc, err := r.client.Collection("groups").Doc(groupID).Get(ctx)
-    if err != nil {
-        return nil, err
-    }
-    var group models.Group
-    if err := doc.DataTo(&group); err != nil {
-        return nil, err
-    }
-    return &group, nil
+func (r *mongoGroupRepository) GetGroup(groupID string) (*models.Group, error) {
+	ctx := context.Background()
+	var group models.Group
+	err := r.collection.FindOne(ctx, bson.M{"id": groupID}).Decode(&group)
+	if err == mongo.ErrNoDocuments {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &group, nil
 }
 
-func (r *firestoreGroupRepository) CreateGroup(group *models.Group) (*models.Group, error) {
-    ctx := context.Background()
-    group.CreatedAt = time.Now()
-    _, err := r.client.Collection("groups").Doc(group.ID).Set(ctx, group)
-    if err != nil {
-        return nil, err
-    }
-    return group, nil
+func (r *mongoGroupRepository) CreateGroup(group *models.Group) (*models.Group, error) {
+	ctx := context.Background()
+	group.CreatedAt = time.Now()
+	_, err := r.collection.InsertOne(ctx, group)
+	if err != nil {
+		return nil, err
+	}
+	return group, nil
 }
 
-func (r *firestoreGroupRepository) UpdateGroup(group *models.Group) error {
-    ctx := context.Background()
-    _, err := r.client.Collection("groups").Doc(group.ID).Set(ctx, group)
-    return err
+func (r *mongoGroupRepository) UpdateGroup(group *models.Group) error {
+	ctx := context.Background()
+	_, err := r.collection.ReplaceOne(ctx, bson.M{"id": group.ID}, group)
+	return err
 }

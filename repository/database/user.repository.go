@@ -4,59 +4,58 @@ import (
 	"context"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"github.com/JomnoiZ/network-backend-group-13.git/models"
-	"google.golang.org/api/iterator"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
-type firestoreUserRepository struct {
-    client *firestore.Client
+type mongoUserRepository struct {
+	collection *mongo.Collection
 }
 
-func NewFirestoreUserRepository(client *firestore.Client) UserRepository {
-    return &firestoreUserRepository{client: client}
+func NewMongoUserRepository(client *mongo.Client) UserRepository {
+	collection := client.Database("chat").Collection("users")
+	return &mongoUserRepository{collection: collection}
 }
 
-func (r *firestoreUserRepository) GetUser(userID string) (*models.User, error) {
-    ctx := context.Background()
-    doc, err := r.client.Collection("users").Doc(userID).Get(ctx)
-    if err != nil {
-        return nil, err
-    }
-    var user models.User
-    if err := doc.DataTo(&user); err != nil {
-        return nil, err
-    }
-    return &user, nil
+func (r *mongoUserRepository) GetUser(userID string) (*models.User, error) {
+	ctx := context.Background()
+	var user models.User
+	err := r.collection.FindOne(ctx, bson.M{"id": userID}).Decode(&user)
+	if err == mongo.ErrNoDocuments {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
-func (r *firestoreUserRepository) CreateUser(user *models.User) (*models.User, error) {
-    ctx := context.Background()
-    user.CreatedAt = time.Now()
-    _, err := r.client.Collection("users").Doc(user.ID).Set(ctx, user)
-    if err != nil {
-        return nil, err
-    }
-    return user, nil
+func (r *mongoUserRepository) CreateUser(user *models.User) (*models.User, error) {
+	ctx := context.Background()
+	user.CreatedAt = time.Now()
+	_, err := r.collection.InsertOne(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
 }
 
-func (r *firestoreUserRepository) GetUserGroups(userID string) ([]*models.Group, error) {
-    ctx := context.Background()
-    iter := r.client.Collection("groups").Where("members", "array-contains", userID).Documents(ctx)
-    groups := []*models.Group{}
-    for {
-        doc, err := iter.Next()
-        if err == iterator.Done {
-            break
-        }
-        if err != nil {
-            return nil, err
-        }
-        var group models.Group
-        if err := doc.DataTo(&group); err != nil {
-            return nil, err
-        }
-        groups = append(groups, &group)
-    }
-    return groups, nil
+func (r *mongoUserRepository) GetUserGroups(userID string) ([]*models.Group, error) {
+	ctx := context.Background()
+	cursor, err := r.collection.Database().Collection("groups").Find(ctx, bson.M{"members": userID})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var groups []*models.Group
+	for cursor.Next(ctx) {
+		var group models.Group
+		if err := cursor.Decode(&group); err != nil {
+			return nil, err
+		}
+		groups = append(groups, &group)
+	}
+	return groups, nil
 }

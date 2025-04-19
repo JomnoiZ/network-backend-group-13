@@ -5,27 +5,34 @@ import (
 	"log"
 	"os"
 
-	"cloud.google.com/go/firestore"
 	"github.com/joho/godotenv"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func NewFirestoreClient() *firestore.Client {
+func NewMongoDBClient() *mongo.Client {
 	// Load .env file if it exists
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, relying on environment variables")
 	}
 
-	ctx := context.Background()
-	projectID := os.Getenv("FIREBASE_PROJECT_ID")
-	if projectID == "" {
-		log.Fatal("FIREBASE_PROJECT_ID environment variable not set")
+	mongoURI := os.Getenv("MONGODB_URI")
+	if mongoURI == "" {
+		log.Fatal("MONGODB_URI environment variable not set")
 	}
 
-	client, err := firestore.NewClient(ctx, projectID)
+	clientOptions := options.Client().ApplyURI(mongoURI)
+	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
-		log.Fatalf("Failed to create Firestore client: %v", err)
+		log.Fatalf("Failed to create MongoDB client: %v", err)
 	}
 
-	log.Println("Firestore initialized")
+	// Verify connection
+	err = client.Ping(context.Background(), nil)
+	if err != nil {
+		log.Fatalf("Failed to ping MongoDB: %v", err)
+	}
+
+	log.Println("MongoDB initialized")
 	return client
 }

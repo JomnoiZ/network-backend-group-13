@@ -13,11 +13,11 @@ import (
 )
 
 func main() {
-	// Initialize Firestore
-	firestoreClient := configs.NewFirestoreClient()
-	userRepo := database.NewFirestoreUserRepository(firestoreClient)
-	groupRepo := database.NewFirestoreGroupRepository(firestoreClient)
-	messageRepo := database.NewFirestoreMessageRepository(firestoreClient)
+	// Initialize MongoDB
+	mongoClient := configs.NewMongoDBClient()
+	userRepo := database.NewMongoUserRepository(mongoClient)
+	groupRepo := database.NewMongoGroupRepository(mongoClient)
+	messageRepo := database.NewMongoMessageRepository(mongoClient)
 
 	// Initialize services
 	websocketService := services.NewWebsocketService(messageRepo)

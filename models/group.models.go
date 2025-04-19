@@ -3,10 +3,10 @@ package models
 import "time"
 
 type Group struct {
-    ID        string    `firestore:"id" json:"id"`
-    Name      string    `firestore:"name" json:"name"`
-    OwnerID   string    `firestore:"owner_id" json:"owner_id"`
-    Admins    []string  `firestore:"admins" json:"admins"`
-    Members   []string  `firestore:"members" json:"members"`
-    CreatedAt time.Time `firestore:"created_at" json:"created_at"`
+	ID        string    `bson:"id" json:"id"`
+	Name      string    `bson:"name" json:"name"`
+	OwnerID   string    `bson:"owner_id" json:"owner_id"`
+	Admins    []string  `bson:"admins" json:"admins"`
+	Members   []string  `bson:"members" json:"members"`
+	CreatedAt time.Time `bson:"created_at" json:"created_at"`
 }
