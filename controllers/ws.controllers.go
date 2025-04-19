@@ -10,38 +10,38 @@ import (
 )
 
 type websocketController struct {
-	websocketService services.WebsocketService
+    websocketService services.WebsocketService
 }
 
 type WebsocketController interface {
-	HandleWebSocket(c *gin.Context)
+    HandleWebSocket(c *gin.Context)
 }
 
 func NewWebsocketController(websocketService services.WebsocketService) WebsocketController {
-	return &websocketController{
-		websocketService: websocketService,
-	}
+    return &websocketController{
+        websocketService: websocketService,
+    }
 }
 
 func (c *websocketController) HandleWebSocket(ctx *gin.Context) {
-	userID := ctx.Query("id")
-	if userID == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Missing user ID"})
-		return
-	}
+    username := ctx.Query("username")
+    if username == "" {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Missing username"})
+        return
+    }
 
-	var upgrader = websocket.Upgrader{
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
+    var upgrader = websocket.Upgrader{
+        ReadBufferSize:  1024,
+        WriteBufferSize: 1024,
+        CheckOrigin: func(r *http.Request) bool { return true },
+    }
 
-	conn, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
-	if err != nil {
-		log.Printf("WebSocket upgrade error for user %s: %v", userID, err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to establish WebSocket connection"})
-		return
-	}
+    conn, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
+    if err != nil {
+        log.Printf("WebSocket upgrade error for user %s: %v", username, err)
+        ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to establish WebSocket connection"})
+        return
+    }
 
-	c.websocketService.HandleConnection(userID, conn)
+    c.websocketService.HandleConnection(username, conn)
 }

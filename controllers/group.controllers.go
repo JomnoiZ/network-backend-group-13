@@ -43,14 +43,14 @@ func (c *groupController) GetGroup(ctx *gin.Context) {
 
 func (c *groupController) CreateGroup(ctx *gin.Context) {
     var groupDTO struct {
-        Name    string `json:"name" binding:"required"`
-        OwnerID string `json:"owner_id" binding:"required"`
+        Name   string `json:"name" binding:"required"`
+        Owner  string `json:"owner" binding:"required"`
     }
     if err := ctx.ShouldBindJSON(&groupDTO); err != nil {
         ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
         return
     }
-    group, err := c.groupService.CreateGroup(groupDTO.Name, groupDTO.OwnerID)
+    group, err := c.groupService.CreateGroup(groupDTO.Name, groupDTO.Owner)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -61,14 +61,14 @@ func (c *groupController) CreateGroup(ctx *gin.Context) {
 func (c *groupController) AddMember(ctx *gin.Context) {
     groupID := ctx.Param("id")
     var req struct {
-        UserID      string `json:"user_id" binding:"required"`
-        RequesterID string `json:"requester_id" binding:"required"`
+        Username    string `json:"username" binding:"required"`
+        Requester   string `json:"requester" binding:"required"`
     }
     if err := ctx.ShouldBindJSON(&req); err != nil {
         ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
         return
     }
-    err := c.groupService.AddMember(groupID, req.UserID, req.RequesterID)
+    err := c.groupService.AddMember(groupID, req.Username, req.Requester)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -78,13 +78,13 @@ func (c *groupController) AddMember(ctx *gin.Context) {
 
 func (c *groupController) KickMember(ctx *gin.Context) {
     groupID := ctx.Param("id")
-    userID := ctx.Param("user_id")
-    requesterID := ctx.Query("requester_id")
-    if requesterID == "" {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Requester ID required"})
+    username := ctx.Param("username")
+    requester := ctx.Query("requester")
+    if requester == "" {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Requester username required"})
         return
     }
-    err := c.groupService.KickMember(groupID, userID, requesterID)
+    err := c.groupService.KickMember(groupID, username, requester)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -94,13 +94,13 @@ func (c *groupController) KickMember(ctx *gin.Context) {
 
 func (c *groupController) AddAdmin(ctx *gin.Context) {
     groupID := ctx.Param("id")
-    userID := ctx.Param("user_id")
-    requesterID := ctx.Query("requester_id")
-    if requesterID == "" {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Requester ID required"})
+    username := ctx.Param("username")
+    requester := ctx.Query("requester")
+    if requester == "" {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Requester username required"})
         return
     }
-    err := c.groupService.AddAdmin(groupID, userID, requesterID)
+    err := c.groupService.AddAdmin(groupID, username, requester)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -110,13 +110,13 @@ func (c *groupController) AddAdmin(ctx *gin.Context) {
 
 func (c *groupController) RemoveAdmin(ctx *gin.Context) {
     groupID := ctx.Param("id")
-    userID := ctx.Param("user_id")
-    requesterID := ctx.Query("requester_id")
-    if requesterID == "" {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Requester ID required"})
+    username := ctx.Param("username")
+    requester := ctx.Query("requester")
+    if requester == "" {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Requester username required"})
         return
     }
-    err := c.groupService.RemoveAdmin(groupID, userID, requesterID)
+    err := c.groupService.RemoveAdmin(groupID, username, requester)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return

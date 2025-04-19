@@ -7,6 +7,6 @@ import (
 )
 
 func WebsocketRoute(websocketService services.WebsocketService, r *gin.Engine) {
-	websocketController := controllers.NewWebsocketController(websocketService)
-	r.GET("/ws", websocketController.HandleWebSocket)
+    websocketController := controllers.NewWebsocketController(websocketService)
+    r.GET("/ws", websocketController.HandleWebSocket)
 }

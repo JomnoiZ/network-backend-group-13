@@ -12,65 +12,65 @@ import (
 )
 
 type mongoMessageRepository struct {
-	collection *mongo.Collection
+    collection *mongo.Collection
 }
 
 func NewMongoMessageRepository(client *mongo.Client) MessageRepository {
-	collection := client.Database("chat").Collection("messages")
-	return &mongoMessageRepository{collection: collection}
+    collection := client.Database("chat").Collection("messages")
+    return &mongoMessageRepository{collection: collection}
 }
 
 func (r *mongoMessageRepository) SaveMessage(message *models.MessageDB) error {
-	ctx := context.Background()
-	if message.ID == "" {
-		message.ID = uuid.New().String()
-	}
-	message.Timestamp = time.Now()
-	_, err := r.collection.InsertOne(ctx, message)
-	return err
+    ctx := context.Background()
+    if message.ID == "" {
+        message.ID = uuid.New().String()
+    }
+    message.Timestamp = time.Now()
+    _, err := r.collection.InsertOne(ctx, message)
+    return err
 }
 
 func (r *mongoMessageRepository) GetGroupMessages(groupID string) ([]*models.MessageDB, error) {
-	ctx := context.Background()
-	cursor, err := r.collection.Find(ctx, bson.M{"group_id": groupID}, options.Find().SetSort(bson.M{"timestamp": 1}))
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
+    ctx := context.Background()
+    cursor, err := r.collection.Find(ctx, bson.M{"group_id": groupID}, options.Find().SetSort(bson.M{"timestamp": 1}))
+    if err != nil {
+        return nil, err
+    }
+    defer cursor.Close(ctx)
 
-	var messages []*models.MessageDB
-	for cursor.Next(ctx) {
-		var msg models.MessageDB
-		if err := cursor.Decode(&msg); err != nil {
-			return nil, err
-		}
-		messages = append(messages, &msg)
-	}
-	return messages, nil
+    var messages []*models.MessageDB
+    for cursor.Next(ctx) {
+        var msg models.MessageDB
+        if err := cursor.Decode(&msg); err != nil {
+            return nil, err
+        }
+        messages = append(messages, &msg)
+    }
+    return messages, nil
 }
 
-func (r *mongoMessageRepository) GetDirectMessages(userID, targetID string) ([]*models.MessageDB, error) {
-	ctx := context.Background()
-	filter := bson.M{
-		"group_id": "",
-		"$or": []bson.M{
-			{"sender_id": userID, "receiver_id": targetID},
-			{"sender_id": targetID, "receiver_id": userID},
-		},
-	}
-	cursor, err := r.collection.Find(ctx, filter, options.Find().SetSort(bson.M{"timestamp": 1}))
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
+func (r *mongoMessageRepository) GetDirectMessages(sender, receiver string) ([]*models.MessageDB, error) {
+    ctx := context.Background()
+    filter := bson.M{
+        "group_id": "",
+        "$or": []bson.M{
+            {"sender": sender, "receiver": receiver},
+            {"sender": receiver, "receiver": sender},
+        },
+    }
+    cursor, err := r.collection.Find(ctx, filter, options.Find().SetSort(bson.M{"timestamp": 1}))
+    if err != nil {
+        return nil, err
+    }
+    defer cursor.Close(ctx)
 
-	var messages []*models.MessageDB
-	for cursor.Next(ctx) {
-		var msg models.MessageDB
-		if err := cursor.Decode(&msg); err != nil {
-			return nil, err
-		}
-		messages = append(messages, &msg)
-	}
-	return messages, nil
+    var messages []*models.MessageDB
+    for cursor.Next(ctx) {
+        var msg models.MessageDB
+        if err := cursor.Decode(&msg); err != nil {
+            return nil, err
+        }
+        messages = append(messages, &msg)
+    }
+    return messages, nil
 }

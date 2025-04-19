@@ -9,40 +9,40 @@ import (
 )
 
 type userService struct {
-    userRepository   database.UserRepository
-    messageRepository     database.MessageRepository
-    websocketService WebsocketService
-    mutex            sync.RWMutex
+    userRepository    database.UserRepository
+    messageRepository database.MessageRepository
+    websocketService  WebsocketService
+    mutex             sync.RWMutex
 }
 
 type UserService interface {
-    GetUser(userID string) (*models.User, error)
-    GetAllUsers() (*models.User, error)
+    GetUser(username string) (*models.User, error)
+    GetAllUsers() ([]*models.User, error)
     CreateUser(user *models.User) (*models.User, error)
     ListOnlineUsers() ([]*models.User, error)
-    ListUserGroups(userID string) ([]*models.Group, error)
-    GetDirectMessages(userID, targetID string) ([]*models.MessageDB, error)
+    ListUserGroups(username string) ([]*models.Group, error)
+    GetDirectMessages(sender, receiver string) ([]*models.MessageDB, error)
 }
 
 func NewUserService(userRepo database.UserRepository, messageRepo database.MessageRepository, wsService WebsocketService) UserService {
     return &userService{
-        userRepository:   userRepo,
+        userRepository:    userRepo,
         messageRepository: messageRepo,
-        websocketService: wsService,
+        websocketService:  wsService,
     }
 }
 
-func (s *userService) GetUser(userID string) (*models.User, error) {
-    return s.userRepository.GetUser(userID)
+func (s *userService) GetUser(username string) (*models.User, error) {
+    return s.userRepository.GetUser(username)
 }
 
-func (s *userService) GetAllUsers() (*models.User, error) {
-    return s.userRepository.GetAllUser()
+func (s *userService) GetAllUsers() ([]*models.User, error) {
+    return s.userRepository.GetAllUsers()
 }
 
 func (s *userService) CreateUser(user *models.User) (*models.User, error) {
-    if user.ID == "" || user.Username == "" {
-        return nil, errors.New("user ID and username are required")
+    if user.Username == "" {
+        return nil, errors.New("username is required")
     }
     return s.userRepository.CreateUser(user)
 }
@@ -52,8 +52,8 @@ func (s *userService) ListOnlineUsers() ([]*models.User, error) {
     defer s.mutex.RUnlock()
 
     onlineUsers := make([]*models.User, 0)
-    for userID := range s.websocketService.GetClients() {
-        user, err := s.userRepository.GetUser(userID)
+    for username := range s.websocketService.GetClients() {
+        user, err := s.userRepository.GetUser(username)
         if err != nil || user == nil {
             continue
         }
@@ -62,13 +62,13 @@ func (s *userService) ListOnlineUsers() ([]*models.User, error) {
     return onlineUsers, nil
 }
 
-func (s *userService) ListUserGroups(userID string) ([]*models.Group, error) {
-    return s.userRepository.GetUserGroups(userID)
+func (s *userService) ListUserGroups(username string) ([]*models.Group, error) {
+    return s.userRepository.GetUserGroups(username)
 }
 
-func (s *userService) GetDirectMessages(userID, targetID string) ([]*models.MessageDB, error) {
-    if userID == "" || targetID == "" {
-        return nil, errors.New("user ID and target ID are required")
+func (s *userService) GetDirectMessages(sender, receiver string) ([]*models.MessageDB, error) {
+    if sender == "" || receiver == "" {
+        return nil, errors.New("sender and receiver usernames are required")
     }
-    return s.messageRepository.GetDirectMessages(userID, targetID)
+    return s.messageRepository.GetDirectMessages(sender, receiver)
 }

@@ -14,7 +14,7 @@ type userController struct {
 
 type UserController interface {
     GetUser(c *gin.Context)
-	GetAllUsers(c *gin.Context)
+    GetAllUsers(c *gin.Context)
     CreateUser(c *gin.Context)
     ListOnlineUsers(c *gin.Context)
     ListUserGroups(c *gin.Context)
@@ -28,8 +28,8 @@ func NewUserController(userService services.UserService) UserController {
 }
 
 func (c *userController) GetUser(ctx *gin.Context) {
-    userID := ctx.Param("id")
-    user, err := c.userService.GetUser(userID)
+    username := ctx.Param("username")
+    user, err := c.userService.GetUser(username)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -42,16 +42,16 @@ func (c *userController) GetUser(ctx *gin.Context) {
 }
 
 func (c *userController) GetAllUsers(ctx *gin.Context) {
-	user, err := c.userService.GetAllUsers()
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if user == nil {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
-		return
-	}
-	ctx.JSON(http.StatusOK, user)
+    users, err := c.userService.GetAllUsers()
+    if err != nil {
+        ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    if len(users) == 0 {
+        ctx.JSON(http.StatusNotFound, gin.H{"error": "No users found"})
+        return
+    }
+    ctx.JSON(http.StatusOK, users)
 }
 
 func (c *userController) CreateUser(ctx *gin.Context) {
@@ -78,8 +78,8 @@ func (c *userController) ListOnlineUsers(ctx *gin.Context) {
 }
 
 func (c *userController) ListUserGroups(ctx *gin.Context) {
-    userID := ctx.Param("id")
-    groups, err := c.userService.ListUserGroups(userID)
+    username := ctx.Param("username")
+    groups, err := c.userService.ListUserGroups(username)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -88,9 +88,9 @@ func (c *userController) ListUserGroups(ctx *gin.Context) {
 }
 
 func (c *userController) GetDirectMessages(ctx *gin.Context) {
-    userID := ctx.Param("id")
-    targetID := ctx.Param("target_id")
-    messages, err := c.userService.GetDirectMessages(userID, targetID)
+    sender := ctx.Param("username")
+    receiver := ctx.Param("receiver")
+    messages, err := c.userService.GetDirectMessages(sender, receiver)
     if err != nil {
         ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
         return

@@ -3,8 +3,8 @@ package models
 import "github.com/gorilla/websocket"
 
 type Client struct {
-    ID     string
-    Conn   *websocket.Conn
-    Send   chan []byte
-    Groups map[string]bool
+    Username string           `json:"username"`
+    Conn     *websocket.Conn  `json:"-"`
+    Send     chan []byte      `json:"-"`
+    Groups   map[string]bool  `json:"groups"`
 }
