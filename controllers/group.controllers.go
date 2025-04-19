@@ -61,8 +61,8 @@ func (c *groupController) CreateGroup(ctx *gin.Context) {
 func (c *groupController) AddMember(ctx *gin.Context) {
     groupID := ctx.Param("id")
     var req struct {
-        Username    string `json:"username" binding:"required"`
-        Requester   string `json:"requester" binding:"required"`
+        Username  string `json:"username" binding:"required"`
+        Requester string `json:"requester" binding:"required"`
     }
     if err := ctx.ShouldBindJSON(&req); err != nil {
         ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
@@ -70,6 +70,14 @@ func (c *groupController) AddMember(ctx *gin.Context) {
     }
     err := c.groupService.AddMember(groupID, req.Username, req.Requester)
     if err != nil {
+        if err.Error() == "group not found" {
+            ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+            return
+        }
+        if err.Error() == "unauthorized" {
+            ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+            return
+        }
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
     }
@@ -78,14 +86,24 @@ func (c *groupController) AddMember(ctx *gin.Context) {
 
 func (c *groupController) KickMember(ctx *gin.Context) {
     groupID := ctx.Param("id")
-    username := ctx.Param("username")
-    requester := ctx.Query("requester")
-    if requester == "" {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Requester username required"})
+    var req struct {
+        Requester string `json:"requester" binding:"required"`
+    }
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
         return
     }
-    err := c.groupService.KickMember(groupID, username, requester)
+    username := ctx.Param("username")
+    err := c.groupService.KickMember(groupID, username, req.Requester)
     if err != nil {
+        if err.Error() == "group not found" {
+            ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+            return
+        }
+        if err.Error() == "unauthorized" {
+            ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+            return
+        }
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
     }
@@ -94,14 +112,28 @@ func (c *groupController) KickMember(ctx *gin.Context) {
 
 func (c *groupController) AddAdmin(ctx *gin.Context) {
     groupID := ctx.Param("id")
-    username := ctx.Param("username")
-    requester := ctx.Query("requester")
-    if requester == "" {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Requester username required"})
+    var req struct {
+        Username  string `json:"username" binding:"required"`
+        Requester string `json:"requester" binding:"required"`
+    }
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
         return
     }
-    err := c.groupService.AddAdmin(groupID, username, requester)
+    err := c.groupService.AddAdmin(groupID, req.Username, req.Requester)
     if err != nil {
+        if err.Error() == "group not found" {
+            ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+            return
+        }
+        if err.Error() == "unauthorized" {
+            ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+            return
+        }
+        if err.Error() == "user not found" || err.Error() == "user not a member" {
+            ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+            return
+        }
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
     }
@@ -110,14 +142,28 @@ func (c *groupController) AddAdmin(ctx *gin.Context) {
 
 func (c *groupController) RemoveAdmin(ctx *gin.Context) {
     groupID := ctx.Param("id")
-    username := ctx.Param("username")
-    requester := ctx.Query("requester")
-    if requester == "" {
-        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Requester username required"})
+    var req struct {
+        Requester string `json:"requester" binding:"required"`
+    }
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
         return
     }
-    err := c.groupService.RemoveAdmin(groupID, username, requester)
+    username := ctx.Param("username")
+    err := c.groupService.RemoveAdmin(groupID, username, req.Requester)
     if err != nil {
+        if err.Error() == "group not found" {
+            ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+            return
+        }
+        if err.Error() == "unauthorized" {
+            ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+            return
+        }
+        if err.Error() == "user not found" || err.Error() == "user not an admin" {
+            ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+            return
+        }
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
     }
