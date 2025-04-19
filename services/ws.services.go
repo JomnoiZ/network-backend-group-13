@@ -67,7 +67,6 @@ func (s *websocketService) HandleConnection(username string, conn *websocket.Con
 			oldClient.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			oldClient.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		}
-		// Do not close oldClient.Send here; let writePump handle it
 	}
 	s.clients[username] = client
 	s.mutex.Unlock()
@@ -95,8 +94,6 @@ func (s *websocketService) AddToGroup(client *models.Client, groupID string) {
 	}
 
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
 	// Only add if client exists in s.clients
 	if actualClient, exists := s.clients[client.Username]; exists {
 		if s.groups[groupID] == nil {
@@ -107,13 +104,17 @@ func (s *websocketService) AddToGroup(client *models.Client, groupID string) {
 		log.Printf("Added user %s to group %s", client.Username, groupID)
 	} else {
 		log.Printf("Client %s not found in clients map for group %s", client.Username, groupID)
+		s.mutex.Unlock()
+		return
 	}
+	s.mutex.Unlock()
+
+	// Notify all group members of the new member
+	s.NotifyGroupUpdate(groupID, "add", map[string]string{"username": client.Username})
 }
 
 func (s *websocketService) KickFromGroup(username string, groupID string) {
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
 	if groupClients, exists := s.groups[groupID]; exists {
 		delete(groupClients, username)
 		if len(groupClients) == 0 {
@@ -121,9 +122,18 @@ func (s *websocketService) KickFromGroup(username string, groupID string) {
 		}
 	}
 
+	var kickedClient *models.Client
 	if client, exists := s.clients[username]; exists {
 		delete(client.Groups, groupID)
-		// Notify the kicked client
+		kickedClient = client
+	}
+	s.mutex.Unlock()
+
+	// Notify all group members of the kick
+	s.NotifyGroupUpdate(groupID, "kick", map[string]string{"username": username})
+
+	// Notify the kicked client
+	if kickedClient != nil {
 		message := models.Message{
 			Type:    "group_update",
 			GroupID: groupID,
@@ -133,7 +143,7 @@ func (s *websocketService) KickFromGroup(username string, groupID string) {
 			},
 		}
 		if messageJSON, err := json.Marshal(message); err == nil {
-			s.sendMessage(client, messageJSON)
+			s.sendMessage(kickedClient, messageJSON)
 		} else {
 			log.Printf("Failed to marshal kick message for %s: %v", username, err)
 		}
@@ -332,7 +342,6 @@ func (s *websocketService) sendMessage(client *models.Client, message []byte) {
 	case client.Send <- message:
 	case <-time.After(sendTimeout):
 		log.Printf("Timeout sending to client %s", client.Username)
-		// Do not perform cleanup here; let readPump/writePump handle it
 	}
 }
 
@@ -391,7 +400,6 @@ func (s *websocketService) handleChatMessage(client *models.Client, msg *models.
 }
 
 func (s *websocketService) handleTypingStatus(client *models.Client, msg *models.Message) {
-	// Skip typing events for groups (not supported by frontend)
 	if msg.GroupID != "" {
 		return
 	}
