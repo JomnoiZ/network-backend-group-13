@@ -64,6 +64,16 @@
       .user-status-offline {
         color: gray;
       }
+      .message-timestamp {
+        font-size: 0.75rem;
+        color: #6b7280;
+        margin-top: 0.25rem;
+      }
+      .empty-chat {
+        text-align: center;
+        color: #6b7280;
+        font-style: italic;
+      }
     </style>
   </head>
   <body class="bg-gray-100 font-sans text-gray-800">
@@ -102,7 +112,7 @@
                 id="loginUser"
                 onclick="loginUser()"
                 class="flex-1 bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
-                title="Enter Username to login"
+                title="Enter Username to login and connect"
               >
                 Login
               </button>
@@ -113,17 +123,6 @@
                 title="Log out and disconnect"
               >
                 Logout
-              </button>
-            </div>
-            <div>
-              <button
-                id="connect"
-                onclick="connect()"
-                class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
-                disabled
-                title="Register or login first to connect"
-              >
-                Connect
               </button>
             </div>
           </div>
@@ -156,7 +155,7 @@
                 class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="e.g., Friends"
                 disabled
-                title="Register and connect to create a group"
+                title="Login to create a group"
               />
             </div>
             <button
@@ -164,7 +163,7 @@
               onclick="createGroup()"
               class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
               disabled
-              title="Enter a group name and connect to create"
+              title="Enter a group name and login to create"
             >
               Create Group
             </button>
@@ -187,9 +186,9 @@
               <input
                 id="targetId"
                 class="flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g., bob or group1"
+                placeholder="e.g., Bob or group1"
                 disabled
-                title="Register and connect to select a chat"
+                title="Login to select a chat"
               />
               <label class="flex items-center gap-1">
                 <input
@@ -197,7 +196,7 @@
                   id="isGroup"
                   class="h-4 w-4"
                   disabled
-                  title="Register and connect to enable group chat"
+                  title="Login to enable group chat"
                 />
                 <span>Group Chat</span>
               </label>
@@ -269,7 +268,7 @@
 
     <script>
       let socket;
-      let username = null; // Changed from userId
+      let username = null;
       let targetId = null;
       let currentGroup = null;
       let displayedMessages = new Set();
@@ -306,7 +305,7 @@
       }
 
       function updateUIState() {
-        const isSignedIn = isRegistered;
+        const isSignedIn = isRegistered && isConnected;
         document.getElementById("username").disabled = isSignedIn;
         const usernameEntered = document
           .getElementById("username")
@@ -328,33 +327,24 @@
           .getElementById("logoutUser")
           .classList.toggle("hidden", !isSignedIn);
 
-        document.getElementById("connect").disabled =
-          !isSignedIn || isConnected;
-        document.getElementById("groupName").disabled =
-          !isSignedIn || !isConnected;
+        document.getElementById("groupName").disabled = !isSignedIn;
         document.getElementById("createGroup").disabled =
-          !isSignedIn ||
-          !isConnected ||
-          !document.getElementById("groupName").value.trim();
+          !isSignedIn || !document.getElementById("groupName").value.trim();
 
         const targetSelected = document.getElementById("targetId").value.trim();
-        document.getElementById("targetId").disabled =
-          !isSignedIn || !isConnected;
-        document.getElementById("isGroup").disabled =
-          !isSignedIn || !isConnected;
+        document.getElementById("targetId").disabled = !isSignedIn;
+        document.getElementById("isGroup").disabled = !isSignedIn;
         document.getElementById("messageInput").disabled =
-          !isSignedIn || !isConnected || !targetSelected;
+          !isSignedIn || !targetSelected;
         document.getElementById("sendMessage").disabled =
           !isSignedIn ||
-          !isConnected ||
           !targetSelected ||
           !document.getElementById("messageInput").value.trim();
 
         document.getElementById("addMemberUsername").disabled =
-          !isSignedIn || !isConnected || !currentGroup;
+          !isSignedIn || !currentGroup;
         document.getElementById("addMember").disabled =
           !isSignedIn ||
-          !isConnected ||
           !currentGroup ||
           !document.getElementById("addMemberUsername").value.trim();
       }
@@ -436,14 +426,113 @@
           }
 
           isRegistered = true;
-          updateUIState();
-          showToast("Logged in successfully as " + username);
-          await updateAllUsers();
-          await updateGroups();
+          await connect(); // Connect to WebSocket after login
         } catch (err) {
           username = null;
+          isRegistered = false;
+          isConnected = false;
           showToast(`Error: ${err.message}`, true);
+          updateUIState();
         }
+      }
+
+      async function connect() {
+        if (!username)
+          return showToast("Please log in or register first", true);
+
+        if (socket) socket.close();
+        socket = new WebSocket(`ws://localhost:8080/ws?username=${username}`);
+
+        socket.onopen = async () => {
+          isConnected = true;
+          updateUIState();
+          showToast("Connected to chat");
+          appendStatusMessage(`Connected as ${username}`, "text-green-600");
+          await updateAllUsers();
+          await updateGroups();
+          sendTyping();
+        };
+
+        socket.onmessage = async (event) => {
+          const msg = JSON.parse(event.data);
+          console.log("Received:", msg);
+
+          switch (msg.type) {
+            case "message":
+              if (!displayedMessages.has(msg.id)) {
+                displayedMessages.add(msg.id);
+                const timestamp = msg.timestamp
+                  ? new Date(msg.timestamp).toLocaleString()
+                  : new Date().toLocaleString();
+                appendMessage(
+                  `[${msg.sender}] ${msg.content}`,
+                  msg.id,
+                  msg.sender === username ? "message-own" : "message-other",
+                  timestamp
+                );
+              }
+              break;
+            case "typing":
+              showTyping(msg.sender, msg.status === "start");
+              break;
+            case "status":
+              appendStatusMessage(
+                `${msg.sender} is ${msg.status}`,
+                "text-gray-500"
+              );
+              if (msg.status === "online") {
+                onlineUsersCache.add(msg.sender);
+              } else {
+                onlineUsersCache.delete(msg.sender);
+              }
+              renderAllUsers();
+              break;
+            case "group_update":
+              const { type: groupUpdateType, data: groupUpdateData } = msg.data;
+              appendMessage(
+                `[GROUP/${msg.group_id}] ${groupUpdateType}: ${JSON.stringify(
+                  groupUpdateData
+                )}`,
+                "",
+                "text-blue-600 status-message",
+                new Date().toLocaleString()
+              );
+              if (msg.group_id === currentGroup) await updateGroupMembers();
+              await updateGroups();
+              break;
+            case "error":
+              showToast(
+                `WebSocket Error: ${msg.message || "Unknown error"}`,
+                true
+              );
+              break;
+            default:
+              console.log("Received unknown message type:", msg.type);
+          }
+        };
+
+        socket.onclose = () => {
+          appendStatusMessage(`Disconnected`, "text-red-600");
+          isConnected = false;
+          isRegistered = false;
+          username = null;
+          onlineUsersCache.clear();
+          renderAllUsers();
+          updateUIState();
+          showToast("Disconnected", true);
+          document.getElementById("group-management").classList.add("hidden");
+        };
+
+        socket.onerror = (error) => {
+          console.error("WebSocket Error:", error);
+          showToast("WebSocket connection error", true);
+          isConnected = false;
+          isRegistered = false;
+          username = null;
+          onlineUsersCache.clear();
+          renderAllUsers();
+          updateUIState();
+        };
       }
 
       function logoutUser() {
@@ -474,96 +563,6 @@
         document.getElementById("group-management").classList.add("hidden");
         updateUIState();
         showToast("Logged out successfully");
-      }
-
-      async function connect() {
-        if (!username)
-          return showToast("Please log in or register first", true);
-
-        if (socket) socket.close();
-        socket = new WebSocket(`ws://localhost:8080/ws?username=${username}`);
-
-        socket.onopen = async () => {
-          isConnected = true;
-          updateUIState();
-          showToast("Connected");
-          appendStatusMessage(`Connected as ${username}`, "text-green-600");
-          await updateAllUsers();
-          await updateGroups();
-          sendTyping();
-        };
-
-        socket.onmessage = async (event) => {
-          const msg = JSON.parse(event.data);
-          console.log("Received:", msg);
-
-          switch (msg.type) {
-            case "message":
-              if (!displayedMessages.has(msg.id)) {
-                displayedMessages.add(msg.id);
-                appendMessage(
-                  `[${msg.sender}] ${msg.content}`,
-                  msg.id,
-                  msg.sender === username ? "message-own" : "message-other"
-                );
-              }
-              break;
-            case "typing":
-              showTyping(msg.sender, msg.status === "start");
-              break;
-            case "status":
-              appendStatusMessage(
-                `${msg.sender} is ${msg.status}`,
-                "text-gray-500"
-              );
-              if (msg.status === "online") {
-                onlineUsersCache.add(msg.sender);
-              } else {
-                onlineUsersCache.delete(msg.sender);
-              }
-              renderAllUsers();
-              break;
-            case "group_update":
-              const { type: groupUpdateType, data: groupUpdateData } = msg.data;
-              appendMessage(
-                `[GROUP/${msg.group_id}] ${groupUpdateType}: ${JSON.stringify(
-                  groupUpdateData
-                )}`,
-                "",
-                "text-blue-600 status-message"
-              );
-              if (msg.group_id === currentGroup) await updateGroupMembers();
-              await updateGroups();
-              break;
-            case "error":
-              showToast(
-                `WebSocket Error: ${msg.message || "Unknown error"}`,
-                true
-              );
-              break;
-            default:
-              console.log("Received unknown message type:", msg.type);
-          }
-        };
-
-        socket.onclose = () => {
-          appendStatusMessage(`Disconnected`, "text-red-600");
-          isConnected = false;
-          onlineUsersCache.clear();
-          renderAllUsers();
-          updateUIState();
-          showToast("Disconnected", true);
-          document.getElementById("group-management").classList.add("hidden");
-        };
-
-        socket.onerror = (error) => {
-          console.error("WebSocket Error:", error);
-          showToast("WebSocket connection error", true);
-          isConnected = false;
-          onlineUsersCache.clear();
-          renderAllUsers();
-          updateUIState();
-        };
       }
 
       async function createGroup() {
@@ -717,8 +716,7 @@
       }
 
       async function joinGroup(groupId) {
-        if (!isConnected)
-          return showToast("Connect first to join a group", true);
+        if (!isConnected) return showToast("Login first to join a group", true);
         currentGroup = groupId;
         document.getElementById("targetId").value = groupId;
         document.getElementById("isGroup").checked = true;
@@ -805,8 +803,7 @@
       }
 
       async function startChat(targetUsername, isGroup) {
-        if (!isConnected)
-          return showToast("Connect first to start a chat", true);
+        if (!isConnected) return showToast("Login first to start a chat", true);
         targetId = targetUsername;
         currentGroup = isGroup ? targetId : null;
         document.getElementById("targetId").value = targetId;
@@ -862,22 +859,31 @@
           const messages = await res.json();
           displayedMessages.clear();
           document.getElementById("messages").innerHTML = "";
-          messages.forEach((msg) => {
-            if (!displayedMessages.has(msg.id)) {
-              displayedMessages.add(msg.id);
-              appendMessage(
-                `[${msg.sender}] ${msg.content}`,
-                msg.id,
-                msg.sender === username ? "message-own" : "message-other"
-              );
-            }
-          });
+          if (messages.length === 0) {
+            appendMessage("No messages yet.", "", "empty-chat", "");
+          } else {
+            messages.forEach((msg) => {
+              if (!displayedMessages.has(msg.id)) {
+                displayedMessages.add(msg.id);
+                const timestamp = msg.timestamp
+                  ? new Date(msg.timestamp).toLocaleString()
+                  : new Date().toLocaleString();
+                appendMessage(
+                  `[${msg.sender}] ${msg.content}`,
+                  msg.id,
+                  msg.sender === username ? "message-own" : "message-other",
+                  timestamp
+                );
+              }
+            });
+          }
         } catch (err) {
           showToast(`Error loading messages: ${err.message}`, true);
           appendMessage(
             `Failed to load message history.`,
             "",
-            "text-red-500 status-message"
+            "text-red-500 status-message",
+            new Date().toLocaleString()
           );
         } finally {
           document.getElementById("loading").classList.add("hidden");
@@ -905,13 +911,15 @@
               }),
             }
           );
-          if (!res.ok)
-            throw new Error((await res.json()).error || "Failed to add member");
+          if (!res.ok) {
+            const errorData = await res.json();
+            throw new Error(errorData.error || "Failed to add member");
+          }
           document.getElementById("addMemberUsername").value = "";
           await updateGroupMembers();
           showToast(`Added ${memberUsername} to group`);
         } catch (err) {
-          showToast(`Error: ${err.message}`, true);
+          showToast(`Error: ${err.message}`, true); // Displays "user not found" for non-existing users
         } finally {
           updateUIState();
         }
@@ -981,11 +989,19 @@
         }
       }
 
-      function appendMessage(content, id, className) {
+      function appendMessage(content, id, className, timestamp) {
         const messages = document.getElementById("messages");
         const msgDiv = document.createElement("div");
         msgDiv.className = `p-2 rounded text-sm ${className}`;
-        msgDiv.textContent = content;
+        const contentDiv = document.createElement("div");
+        contentDiv.textContent = content;
+        msgDiv.appendChild(contentDiv);
+        if (timestamp) {
+          const timeDiv = document.createElement("div");
+          timeDiv.className = "message-timestamp";
+          timeDiv.textContent = timestamp;
+          msgDiv.appendChild(timeDiv);
+        }
         if (id) msgDiv.dataset.id = id;
         messages.appendChild(msgDiv);
         messages.scrollTop = messages.scrollHeight;
