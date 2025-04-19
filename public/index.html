@@ -316,6 +316,7 @@
         const ID_REGEX = /^[a-z0-9-]{1,50}$/;
         const MAX_MESSAGES = 1000;
         const TOAST_DURATION = 3000;
+        const TYPING_TIMEOUT = 5000; // Timeout for typing status per user
 
         // State
         let state = {
@@ -334,6 +335,7 @@
           groups: [],
           typingTimeout: null,
           isTypingSent: false,
+          typingUsers: new Map(), // Map to track users and their typing timeouts
         };
 
         // DOM Elements
@@ -529,6 +531,7 @@
                 msg = JSON.parse(event.data);
                 if (!msg || !msg.type)
                   throw new Error("Invalid message format");
+                console.log("Received WebSocket message:", msg); // Debug log
               } catch (err) {
                 console.error("Malformed WebSocket message:", event.data);
                 return;
@@ -560,8 +563,12 @@
                   }
                   break;
                 case "typing":
-                  if (!msg.group_id)
-                    showTyping(msg.sender, msg.status === "start");
+                  console.log(
+                    `Typing message: sender=${msg.sender}, status=${
+                      msg.status
+                    }, group_id=${msg.group_id || "none"}`
+                  ); // Debug log
+                  showTyping(msg.sender, msg.status === "start", msg.group_id);
                   break;
                 case "status":
                   appendStatusMessage(
@@ -611,6 +618,8 @@
                         elements.isGroup.checked = false;
                         elements.groupManagement.classList.add("hidden");
                         elements.messages.innerHTML = "";
+                        elements.typingUsers.clear();
+                        elements.typingStatus.textContent = "";
                         elements.chatContext.textContent = "";
                         showToast(
                           `You were kicked from group ${msg.group_id}`,
@@ -639,6 +648,8 @@
               appendStatusMessage("Disconnected", "text-red-600");
               showToast("Disconnected from chat", true);
               elements.groupManagement.classList.add("hidden");
+              state.typingUsers.clear();
+              elements.typingStatus.textContent = "";
               attemptReconnect();
               updateUIState();
             };
@@ -647,6 +658,8 @@
               console.error("WebSocket Error:", error);
               showToast("WebSocket connection error", true);
               state.isConnected = false;
+              state.typingUsers.clear();
+              elements.typingStatus.textContent = "";
               updateUIState();
             };
 
@@ -802,6 +815,7 @@
           state.groups = [];
           state.reconnectAttempts = 0;
           state.processingButtons.clear();
+          state.typingUsers.clear();
 
           elements.username.value = "";
           elements.targetId.value = "";
@@ -1048,6 +1062,7 @@
             elements.isGroup.checked = true;
             elements.groupManagement.classList.remove("hidden");
             state.displayedMessages.clear();
+            state.typingUsers.clear();
             elements.messages.innerHTML = "";
             elements.typingStatus.textContent = "";
 
@@ -1229,6 +1244,7 @@
               elements.isGroup.checked = false;
               elements.groupManagement.classList.add("hidden");
               state.displayedMessages.clear();
+              state.typingUsers.clear();
               elements.messages.innerHTML = "";
               elements.typingStatus.textContent = "";
 
@@ -1541,33 +1557,115 @@
           }
         }
 
-        function showTyping(sender, isTyping) {
+        function updateTypingDisplay() {
           if (
-            sender === state.username ||
-            state.targetId !== sender ||
-            elements.isGroup.checked
-          )
+            elements.isGroup.checked &&
+            state.currentGroup === state.targetId
+          ) {
+            const activeUsers = Array.from(state.typingUsers.keys())
+              .filter((sender) => state.typingUsers.get(sender).active)
+              .map(sanitizeInput);
+            if (activeUsers.length > 0) {
+              elements.typingStatus.textContent = `${activeUsers.join(", ")} ${
+                activeUsers.length > 1 ? "are" : "is"
+              } typing...`;
+            } else {
+              elements.typingStatus.textContent = "";
+            }
+          } else if (
+            !elements.isGroup.checked &&
+            state.typingUsers.has(state.targetId)
+          ) {
+            const isActive = state.typingUsers.get(state.targetId).active;
+            elements.typingStatus.textContent = isActive
+              ? `${sanitizeInput(state.targetId)} is typing...`
+              : "";
+          } else {
+            elements.typingStatus.textContent = "";
+          }
+        }
+
+        function showTyping(sender, isTyping, groupId) {
+          if (sender === state.username) return;
+
+          console.log(
+            `Processing typing: sender=${sender}, isTyping=${isTyping}, groupId=${
+              groupId || "none"
+            }, currentGroup=${state.currentGroup}, targetId=${
+              state.targetId
+            }, isGroup=${elements.isGroup.checked}`
+          ); // Debug log
+
+          const isGroupChat =
+            elements.isGroup.checked &&
+            groupId &&
+            groupId === state.currentGroup &&
+            groupId === state.targetId;
+          const isDirectChat =
+            !elements.isGroup.checked && !groupId && sender === state.targetId;
+
+          if (!isGroupChat && !isDirectChat) {
+            console.log("Typing message ignored: not relevant to current chat");
             return;
-          elements.typingStatus.textContent = isTyping
-            ? `${sanitizeInput(sender)} is typing...`
-            : "";
+          }
+
+          // Clear existing timeout if any
+          if (state.typingUsers.has(sender)) {
+            clearTimeout(state.typingUsers.get(sender).timeout);
+          }
+
+          if (isTyping) {
+            // Set typing status with a timeout
+            const timeout = setTimeout(() => {
+              state.typingUsers.set(sender, {
+                active: false,
+                timeout: null,
+              });
+              updateTypingDisplay();
+            }, TYPING_TIMEOUT);
+
+            state.typingUsers.set(sender, {
+              active: true,
+              timeout: timeout,
+            });
+          } else {
+            state.typingUsers.set(sender, {
+              active: false,
+              timeout: null,
+            });
+          }
+
+          updateTypingDisplay();
         }
 
         function sendTypingStatus(isTyping) {
-          if (!state.isConnected || !state.targetId || elements.isGroup.checked)
+          if (!state.isConnected || !state.targetId) {
+            console.log(
+              "Cannot send typing status: not connected or no target"
+            );
             return;
-          if (state.isTypingSent === isTyping) return;
+          }
+          if (state.isTypingSent === isTyping) {
+            console.log("Typing status unchanged, skipping send");
+            return;
+          }
 
           if (state.socket && state.socket.readyState === WebSocket.OPEN) {
-            state.socket.send(
-              JSON.stringify({
-                type: "typing",
-                sender: state.username,
-                receiver: state.targetId,
-                status: isTyping ? "start" : "stop",
-              })
-            );
+            const message = {
+              type: "typing",
+              sender: state.username,
+              status: isTyping ? "start" : "stop",
+            };
+            if (elements.isGroup.checked) {
+              message.group_id = state.targetId;
+            } else {
+              message.receiver = state.targetId;
+            }
+            console.log("Sending typing status:", message); // Debug log
+            state.socket.send(JSON.stringify(message));
             state.isTypingSent = isTyping;
+          } else {
+            console.log("WebSocket not open, cannot send typing status");
           }
         }
 
@@ -1641,10 +1739,14 @@
         );
 
         elements.targetId.addEventListener("input", () => {
+          state.typingUsers.clear();
+          elements.typingStatus.textContent = "";
           updateUIState();
         });
 
         elements.isGroup.addEventListener("change", () => {
+          state.typingUsers.clear();
+          elements.typingStatus.textContent = "";
           if (elements.isGroup.checked && state.targetId) {
             startChat(state.targetId, true);
           } else if (state.targetId) {
