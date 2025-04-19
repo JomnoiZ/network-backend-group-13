@@ -17,12 +17,30 @@
       .status-message {
         background-color: #f3f4f6;
       }
+      .toast-container {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        z-index: 50;
+      }
       .toast {
-        transition: opacity 0.3s ease, transform 0.3s ease;
+        background-color: #ffffff;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border-radius: 0.5rem;
+        padding: 1rem;
+        max-width: 20rem;
+        opacity: 1;
+        transform: translateY(0);
+        transition: opacity 0.5s ease, transform 0.5s ease;
+        pointer-events: auto;
       }
       .toast-hidden {
         opacity: 0;
-        transform: translateY(-10px);
+        transform: translateY(-0.5rem);
+        pointer-events: none;
       }
       #messages,
       #status-log {
@@ -55,6 +73,15 @@
         }
         #sidebar {
           width: 100%;
+        }
+        .toast-container {
+          right: 0.5rem;
+          left: 0.5rem;
+          align-items: flex-end;
+        }
+        .toast {
+          width: 100%;
+          max-width: none;
         }
       }
       .user-status-online {
@@ -95,12 +122,7 @@
       <h1 class="text-2xl sm:text-3xl font-bold mb-6 text-center text-blue-600">
         Go WebSocket Chat
       </h1>
-      <div
-        id="toast"
-        class="fixed top-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm toast toast-hidden"
-        role="alert"
-        aria-live="assertive"
-      ></div>
+      <div id="toast-container" class="toast-container" role="alert" aria-live="assertive"></div>
       <div id="container" class="flex flex-col sm:flex-row gap-6">
         <div id="sidebar" class="w-full sm:w-80 bg-white rounded-lg shadow p-4">
           <h2 class="text-lg font-semibold mb-4">User Setup</h2>
@@ -315,7 +337,8 @@
         const GROUP_NAME_REGEX = /^[\w\s-]{3,50}$/;
         const ID_REGEX = /^[a-z0-9-]{1,50}$/;
         const MAX_MESSAGES = 1000;
-        const TOAST_DURATION = 3000;
+        const TOAST_DURATION = 4000;
+        const TOAST_FADE_DURATION = 500;
         const TYPING_TIMEOUT = 5000;
 
         // State
@@ -340,7 +363,7 @@
 
         // DOM Elements
         const elements = {
-          toast: document.getElementById("toast"),
+          toastContainer: document.getElementById("toast-container"),
           username: document.getElementById("username"),
           registerUser: document.getElementById("registerUser"),
           loginUser: document.getElementById("loginUser"),
@@ -375,18 +398,32 @@
 
         function showToast(message, isError = false) {
           if (!message) return;
-          elements.toast.textContent = message;
-          elements.toast.className = `fixed top-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm toast ${
-            isError
-              ? "border-l-4 border-red-500"
-              : "border-l-4 border-green-500"
-          }`;
-          elements.toast.setAttribute("aria-label", message);
+
+          // Create a new toast element
+          const toast = document.createElement("div");
+          toast.className = `toast ${isError ? "border-l-4 border-red-500" : "border-l-4 border-green-500"}`;
+          toast.textContent = message;
+          toast.setAttribute("aria-label", message);
+
+          // Append to toast container
+          elements.toastContainer.appendChild(toast);
+
+          // Trigger reflow to start animation
+          toast.offsetHeight;
+
+          // Calculate staggered fade-out time based on number of toasts
+          const activeToasts = elements.toastContainer.children.length;
+          const fadeOutDelay = TOAST_DURATION + (activeToasts - 1) * 200; // Stagger by 200ms per toast
+
+          // Fade out and remove after duration
           setTimeout(() => {
-            elements.toast.className =
-              "fixed top-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm toast toast-hidden";
-            elements.toast.removeAttribute("aria-label");
-          }, TOAST_DURATION);
+            toast.className = `toast toast-hidden ${isError ? "border-l-4 border-red-500" : "border-l-4 border-green-500"}`;
+            setTimeout(() => {
+              if (toast.parentElement) {
+                toast.remove();
+              }
+            }, TOAST_FADE_DURATION);
+          }, fadeOutDelay);
         }
 
         function showError(elementId, message) {
@@ -1195,18 +1232,18 @@
                               }" ${
                                 state.processingButtons.has(buttonKey)
                                   ? "disabled"
-                                  : ""
+                                : ""
                               } aria-label="Remove admin status from ${memberUsername}">Remove Admin</button>`
                             : `<button onclick="ChatApp.addAdmin('${sanitizeInput(
                                 memberUsername
                               )}')" class="bg-green-500 text-white px-1 py-0.5 rounded text-xs hover:bg-green-600 focus:outline-none focus:ring-1 focus:ring-green-500 ${
                                 state.processingButtons.has(buttonKey)
                                   ? "button-loading"
-                                  : ""
+                                : ""
                               }" ${
                                 state.processingButtons.has(buttonKey)
                                   ? "disabled"
-                                  : ""
+                                : ""
                               } aria-label="Make ${memberUsername} admin">Make Admin</button>`
                           : ""
                       }
