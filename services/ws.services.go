@@ -306,31 +306,31 @@ func (s *websocketService) handleChatMessage(msg *models.Message) {
 }
 
 func (s *websocketService) handleTypingStatus(msg *models.Message) {
-	messageJSON, err := json.Marshal(msg)
-	if err != nil {
-		log.Println("Failed to marshal typing status:", err)
-		return
-	}
+    messageJSON, err := json.Marshal(msg)
+    if err != nil {
+        log.Println("Failed to marshal typing status:", err)
+        return
+    }
 
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+    s.mutex.RLock()
+    defer s.mutex.RUnlock()
 
-	// Broadcast to group
-	if msg.GroupID != "" {
-		if groupClients, exists := s.groups[msg.GroupID]; exists {
-			for _, client := range groupClients {
-				if client.ID != msg.SenderID {
-					s.sendMessage(client, messageJSON)
-				}
-			}
-		}
-		return
-	}
+    // Broadcast to group
+    if msg.GroupID != "" {
+        if groupClients, exists := s.groups[msg.GroupID]; exists {
+            for _, client := range groupClients {
+                if client.ID != msg.SenderID {
+                    s.sendMessage(client, messageJSON)
+                }
+            }
+        }
+        return
+    }
 
-	// Send to receiver
-	if msg.ReceiverID != "" && msg.ReceiverID != msg.SenderID {
-		if client, exists := s.clients[msg.ReceiverID]; exists {
-			s.sendMessage(client, messageJSON)
-		}
-	}
+    // Send to receiver
+    if msg.ReceiverID != "" && msg.ReceiverID != msg.SenderID {
+        if client, exists := s.clients[msg.ReceiverID]; exists {
+            s.sendMessage(client, messageJSON)
+        }
+    }
 }

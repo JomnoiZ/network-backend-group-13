@@ -119,8 +119,9 @@
     <script>
       let socket;
       let userId, username, targetId;
-      let typingTimeout;
       let currentGroup = null;
+      let displayedMessages = new Set(); // Track displayed message IDs
+      let isTypingSent = false; // Track if typing status is sent
 
       async function registerUser() {
         userId = document.getElementById("userId").value.trim();
@@ -146,6 +147,11 @@
         userId = document.getElementById("userId").value.trim();
         if (!userId) return alert("Enter your user ID");
 
+        // Close existing socket if any
+        if (socket) {
+          socket.close();
+        }
+
         socket = new WebSocket(`ws://localhost:8080/ws?id=${userId}`);
 
         socket.onopen = () => {
@@ -159,12 +165,17 @@
           console.log("Received:", msg);
 
           if (msg.type === "message") {
-            appendMessage(`[${msg.sender_id}] ${msg.content}`);
+            // Prevent duplicate messages
+            if (!displayedMessages.has(msg.id)) {
+              displayedMessages.add(msg.id);
+              appendMessage(`[${msg.sender_id}] ${msg.content}`, msg.id);
+            }
           } else if (msg.type === "typing") {
             showTyping(msg.sender_id, msg.status === "start");
           } else if (msg.type === "status") {
             appendMessage(
               `[STATUS] ${msg.sender_id} is ${msg.status}`,
+              "",
               "status"
             );
             updateOnlineUsers();
@@ -172,6 +183,7 @@
             const { type, data } = msg.data;
             appendMessage(
               `[GROUP] ${type}: ${JSON.stringify(data)}`,
+              "",
               "group-update"
             );
             if (msg.group_id === currentGroup) {
@@ -182,8 +194,16 @@
         };
 
         socket.onclose = () => {
-          logStatus("Disconnected");
+          logStatus("Disconnected, attempting to reconnect...");
           document.getElementById("group-management").style.display = "none";
+          setTimeout(connect, 3000); // Attempt to reconnect after 3 seconds
+        };
+
+        socket.onerror = (error) => {
+          logStatus(
+            `WebSocket error: ${error.message || "Unknown error"}`,
+            true
+          );
         };
       }
 
@@ -205,6 +225,7 @@
           const group = await res.json();
           appendMessage(
             `[GROUP] Created group ${group.name} (${group.id})`,
+            "",
             "group-update"
           );
           updateGroups();
@@ -261,14 +282,16 @@
         document.getElementById("targetId").value = groupId;
         document.getElementById("isGroup").checked = true;
         document.getElementById("group-management").style.display = "block";
-        socket.send(
-          JSON.stringify({
-            type: "join_group",
-            sender_id: userId,
-            group_id: groupId,
-          })
-        );
-        appendMessage(`[GROUP] Joined group ${groupId}`, "group-update");
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(
+            JSON.stringify({
+              type: "join_group",
+              sender_id: userId,
+              group_id: groupId,
+            })
+          );
+        }
+        appendMessage(`[GROUP] Joined group ${groupId}`, "", "group-update");
         await updateGroupMembers();
         await loadMessageHistory(groupId, true);
       }
@@ -293,7 +316,7 @@
                 const user = await userRes.json();
                 return { id: memberId, username: user.username || memberId };
               } catch {
-                return { id: memberId, username: memberId };
+                return { id: messageId, username: memberId };
               }
             })
           );
@@ -354,7 +377,11 @@
           );
           if (!res.ok)
             throw new Error((await res.json()).error || "Failed to add member");
-          appendMessage(`[GROUP] Added ${memberId} to group`, "group-update");
+          appendMessage(
+            `[GROUP] Added ${memberId} to group`,
+            "",
+            "group-update"
+          );
           updateGroupMembers();
         } catch (err) {
           logStatus(`Error: ${err.message}`, true);
@@ -373,6 +400,7 @@
             );
           appendMessage(
             `[GROUP] Kicked ${memberId} from group`,
+            "",
             "group-update"
           );
           updateGroupMembers();
@@ -389,7 +417,11 @@
           );
           if (!res.ok)
             throw new Error((await res.json()).error || "Failed to add admin");
-          appendMessage(`[GROUP] Made ${memberId} an admin`, "group-update");
+          appendMessage(
+            `[GROUP] Made ${memberId} an admin`,
+            "",
+            "group-update"
+          );
           updateGroupMembers();
         } catch (err) {
           logStatus(`Error: ${err.message}`, true);
@@ -406,7 +438,11 @@
             throw new Error(
               (await res.json()).error || "Failed to remove admin"
             );
-          appendMessage(`[GROUP] Removed ${memberId} as admin`, "group-update");
+          appendMessage(
+            `[GROUP] Removed ${memberId} as admin`,
+            "",
+            "group-update"
+          );
           updateGroupMembers();
         } catch (err) {
           logStatus(`Error: ${err.message}`, true);
@@ -426,8 +462,12 @@
           const messages = await res.json();
           const div = document.getElementById("messages");
           div.innerHTML = "";
+          displayedMessages.clear();
           messages.forEach((msg) => {
-            appendMessage(`[${msg.sender_id}] ${msg.content}`);
+            if (!displayedMessages.has(msg.id)) {
+              displayedMessages.add(msg.id);
+              appendMessage(`[${msg.sender_id}] ${msg.content}`, msg.id);
+            }
           });
         } catch (err) {
           logStatus(`Error loading message history: ${err.message}`, true);
@@ -446,68 +486,90 @@
         } else {
           loadMessageHistory(id, false);
         }
+        // Update typing status when switching chats
+        sendTyping();
       }
 
       function sendMessage() {
         const content = document.getElementById("messageInput").value.trim();
-        if (!content || !socket || socket.readyState !== WebSocket.OPEN) return;
+        if (!content || !socket || socket.readyState !== WebSocket.OPEN) {
+          logStatus(
+            "Cannot send message: Not connected or empty message",
+            true
+          );
+          return;
+        }
 
         const isGroup = document.getElementById("isGroup").checked;
         targetId = document.getElementById("targetId").value.trim();
+        if (!targetId) {
+          logStatus("Please specify a user or group to chat with", true);
+          return;
+        }
 
-        socket.send(
-          JSON.stringify({
-            type: "message",
-            sender_id: userId,
-            [isGroup ? "group_id" : "receiver_id"]: targetId,
-            content,
-          })
-        );
+        const messageId = crypto.randomUUID();
+        const message = {
+          type: "message",
+          sender_id: userId,
+          [isGroup ? "group_id" : "receiver_id"]: targetId,
+          content,
+          id: messageId,
+        };
 
-        appendMessage(`[${userId}] ${content}`);
+        socket.send(JSON.stringify(message));
+        // Append locally for optimistic UI, will be deduplicated if received
+        if (!displayedMessages.has(messageId)) {
+          displayedMessages.add(messageId);
+          appendMessage(`[${userId}] ${content}`, messageId);
+        }
         document.getElementById("messageInput").value = "";
-        sendTyping(true);
+        sendTyping(); // Send stop typing status after sending message
       }
 
-      function sendTyping(forceStop = false) {
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      function sendTyping() {
+        if (!socket || socket.readyState !== WebSocket.OPEN || !userId) return;
         targetId = document.getElementById("targetId").value.trim();
         if (!targetId) return;
 
-        clearTimeout(typingTimeout);
+        const content = document.getElementById("messageInput").value.trim();
+        const shouldBeTyping = content.length > 0;
 
-        socket.send(
-          JSON.stringify({
-            type: "typing",
-            sender_id: userId,
-            [document.getElementById("isGroup").checked
-              ? "group_id"
-              : "receiver_id"]: targetId,
-            status: forceStop ? "stop" : "start",
-          })
-        );
-
-        if (!forceStop) {
-          typingTimeout = setTimeout(() => {
-            socket.send(
-              JSON.stringify({
-                type: "typing",
-                sender_id: userId,
-                [document.getElementById("isGroup").checked
-                  ? "group_id"
-                  : "receiver_id"]: targetId,
-                status: "stop",
-              })
-            );
-          }, 1000);
+        // Only send typing status if it has changed
+        if (shouldBeTyping && !isTypingSent) {
+          socket.send(
+            JSON.stringify({
+              type: "typing",
+              sender_id: userId,
+              [document.getElementById("isGroup").checked
+                ? "group_id"
+                : "receiver_id"]: targetId,
+              status: "start",
+            })
+          );
+          isTypingSent = true;
+        } else if (!shouldBeTyping && isTypingSent) {
+          socket.send(
+            JSON.stringify({
+              type: "typing",
+              sender_id: userId,
+              [document.getElementById("isGroup").checked
+                ? "group_id"
+                : "receiver_id"]: targetId,
+              status: "stop",
+            })
+          );
+          isTypingSent = false;
         }
       }
 
-      function appendMessage(msg, className = "") {
+      function appendMessage(msg, messageId = "", className = "") {
         const div = document.getElementById("messages");
         const el = document.createElement("div");
         el.className = className;
         el.textContent = msg;
+        if (messageId) {
+          el.dataset.messageId = messageId; // Store message ID for reference
+        }
         div.appendChild(el);
         div.scrollTop = div.scrollHeight;
       }
