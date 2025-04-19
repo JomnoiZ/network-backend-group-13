@@ -87,6 +87,8 @@
       <div
         id="toast"
         class="fixed top-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm toast toast-hidden"
+        role="alert"
+        aria-live="assertive"
       ></div>
       <div id="container" class="flex flex-col sm:flex-row gap-6">
         <div id="sidebar" class="w-full sm:w-80 bg-white rounded-lg shadow p-4">
@@ -101,30 +103,35 @@
                 class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="e.g., alice (3-20 alphanumeric characters)"
                 maxlength="20"
+                aria-describedby="username-error"
               />
+              <div
+                id="username-error"
+                class="text-red-500 text-sm hidden"
+              ></div>
             </div>
             <div id="auth-buttons" class="flex gap-2">
               <button
                 id="registerUser"
-                onclick="registerUser()"
+                onclick="ChatApp.registerUser()"
                 class="flex-1 bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
-                title="Enter Username to register"
+                aria-label="Register with username"
               >
                 Register
               </button>
               <button
                 id="loginUser"
-                onclick="loginUser()"
+                onclick="ChatApp.loginUser()"
                 class="flex-1 bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
-                title="Enter Username to login and connect"
+                aria-label="Login with username"
               >
                 Login
               </button>
               <button
                 id="logoutUser"
-                onclick="logoutUser()"
+                onclick="ChatApp.logoutUser()"
                 class="flex-1 bg-red-500 text-white p-2 rounded hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 hidden"
-                title="Log out and disconnect"
+                aria-label="Logout"
               >
                 Logout
               </button>
@@ -160,15 +167,19 @@
                 placeholder="e.g., Friends (3-50 characters)"
                 maxlength="50"
                 disabled
-                title="Login to create a group"
+                aria-describedby="groupName-error"
               />
+              <div
+                id="groupName-error"
+                class="text-red-500 text-sm hidden"
+              ></div>
             </div>
             <button
               id="createGroup"
-              onclick="createGroup()"
+              onclick="ChatApp.createGroup()"
               class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
               disabled
-              title="Enter a group name and login to create"
+              aria-label="Create group with name"
             >
               Create Group
             </button>
@@ -194,7 +205,7 @@
                 placeholder="e.g., bob or group1"
                 maxlength="50"
                 disabled
-                title="Login to select a chat"
+                aria-describedby="targetId-error"
               />
               <label class="flex items-center gap-1">
                 <input
@@ -202,11 +213,12 @@
                   id="isGroup"
                   class="h-4 w-4"
                   disabled
-                  title="Login to enable group chat"
+                  aria-label="Toggle group chat"
                 />
                 <span>Group Chat</span>
               </label>
             </div>
+            <div id="targetId-error" class="text-red-500 text-sm hidden"></div>
           </div>
           <div
             id="group-management"
@@ -220,18 +232,22 @@
                 placeholder="Username (e.g., bob)"
                 maxlength="20"
                 disabled
-                title="Select a group to add members"
+                aria-describedby="addMemberUsername-error"
               />
               <button
                 id="addMember"
-                onclick="addMember()"
+                onclick="ChatApp.addMember()"
                 class="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
                 disabled
-                title="Enter a username to add"
+                aria-label="Add member to group"
               >
                 Add
               </button>
             </div>
+            <div
+              id="addMemberUsername-error"
+              class="text-red-500 text-sm hidden"
+            ></div>
             <div class="text-sm font-medium mb-2">Group Members</div>
             <div
               id="group-members"
@@ -256,1301 +272,1374 @@
               class="flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="Type a message... (max 1000 characters)"
               maxlength="1000"
-              oninput="sendTyping()"
               disabled
-              title="Select a chat to send messages"
+              aria-describedby="messageInput-error"
             />
             <button
               id="sendMessage"
-              onclick="sendMessage()"
+              onclick="ChatApp.sendMessage()"
               class="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-400"
               disabled
-              title="Type a message to send"
+              aria-label="Send message"
             >
               Send
             </button>
           </div>
+          <div
+            id="messageInput-error"
+            class="text-red-500 text-sm hidden"
+          ></div>
         </div>
       </div>
     </div>
 
     <script>
-      let socket = null;
-      let username = null;
-      let targetId = null;
-      let currentGroup = null;
-      let displayedMessages = new Set();
-      let isTypingSent = false;
-      let isRegistered = false;
-      let isConnected = false;
-      let typingTimeout = null;
-      let currentChatName = "";
-      let allUsersCache = [];
-      let onlineUsersCache = new Set();
-      let isProcessing = false; // Prevent concurrent actions
-      let reconnectAttempts = 0;
-      const MAX_RECONNECT_ATTEMPTS = 3;
-      const RECONNECT_INTERVAL = 5000; // 5 seconds
-      const USERNAME_REGEX = /^[a-z0-9]{3,20}$/i; // Alphanumeric, 3-20 chars
-      const GROUP_NAME_REGEX = /^[\w\s-]{3,50}$/i; // Alphanumeric, spaces, hyphens
-      const ID_REGEX = /^[a-z0-9-]{1,50}$/i; // Alphanumeric, hyphens for group IDs
+      const ChatApp = (function () {
+        // Constants
+        const API_BASE = "http://localhost:8080";
+        const WS_BASE = "ws://localhost:8080/ws";
+        const MAX_RECONNECT_ATTEMPTS = 3;
+        const RECONNECT_INTERVAL = 5000;
+        const USERNAME_REGEX = /^[a-z0-9]{3,20}$/;
+        const GROUP_NAME_REGEX = /^[\w\s-]{3,50}$/;
+        const ID_REGEX = /^[a-z0-9-]{1,50}$/;
+        const MAX_MESSAGES = 1000; // Limit stored messages
+        const TOAST_DURATION = 3000;
 
-      function debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-          const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-          };
-          clearTimeout(timeout);
-          timeout = setTimeout(later, wait);
+        // State
+        let state = {
+          socket: null,
+          username: null,
+          targetId: null,
+          currentGroup: null,
+          isRegistered: false,
+          isConnected: false,
+          isProcessing: false,
+          reconnectAttempts: 0,
+          displayedMessages: new Set(),
+          allUsers: [],
+          onlineUsers: new Set(),
+          groups: [],
+          typingTimeout: null,
+          isTypingSent: false,
         };
-      }
 
-      function showToast(message, isError = false, duration = 3000) {
-        if (!message) return;
-        const toast = document.getElementById("toast");
-        toast.textContent = message;
-        toast.className = `fixed top-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm toast ${
-          isError ? "border-l-4 border-red-500" : "border-l-4 border-green-500"
-        }`;
-        setTimeout(() => {
-          toast.className =
-            "fixed top-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm toast toast-hidden";
-        }, duration);
-      }
+        // DOM Elements
+        const elements = {
+          toast: document.getElementById("toast"),
+          username: document.getElementById("username"),
+          registerUser: document.getElementById("registerUser"),
+          loginUser: document.getElementById("loginUser"),
+          logoutUser: document.getElementById("logoutUser"),
+          groupName: document.getElementById("groupName"),
+          createGroup: document.getElementById("createGroup"),
+          targetId: document.getElementById("targetId"),
+          isGroup: document.getElementById("isGroup"),
+          addMemberUsername: document.getElementById("addMemberUsername"),
+          addMember: document.getElementById("addMember"),
+          messageInput: document.getElementById("messageInput"),
+          sendMessage: document.getElementById("sendMessage"),
+          messages: document.getElementById("messages"),
+          statusLog: document.getElementById("status-log"),
+          allUsers: document.getElementById("all-users"),
+          groups: document.getElementById("groups"),
+          groupMembers: document.getElementById("group-members"),
+          chatContext: document.getElementById("chat-context"),
+          typingStatus: document.getElementById("typing-status"),
+          groupManagement: document.getElementById("group-management"),
+          loading: document.getElementById("loading"),
+        };
 
-      function validateUsername(input, elementId) {
-        const element = document.getElementById(elementId);
-        if (!input) {
-          element.classList.add("error-input");
-          return "Username cannot be empty";
-        }
-        if (!USERNAME_REGEX.test(input)) {
-          element.classList.add("error-input");
-          return "Username must be 3-20 alphanumeric characters";
-        }
-        element.classList.remove("error-input");
-        return null;
-      }
-
-      function validateGroupName(name) {
-        const element = document.getElementById("groupName");
-        if (!name) {
-          element.classList.add("error-input");
-          return "Group name cannot be empty";
-        }
-        if (!GROUP_NAME_REGEX.test(name)) {
-          element.classList.add("error-input");
-          return "Group name must be 3-50 characters (alphanumeric, spaces, hyphens)";
-        }
-        element.classList.remove("error-input");
-        return null;
-      }
-
-      function validateTargetId(id) {
-        const element = document.getElementById("targetId");
-        if (!id) {
-          element.classList.add("error-input");
-          return "Target ID cannot be empty";
-        }
-        if (!ID_REGEX.test(id)) {
-          element.classList.add("error-input");
-          return "Target ID must be 1-50 alphanumeric characters or hyphens";
-        }
-        element.classList.remove("error-input");
-        return null;
-      }
-
-      function validateMessage(content) {
-        if (!content) return "Message cannot be empty";
-        if (content.length > 1000)
-          return "Message too long (max 1000 characters)";
-        return null;
-      }
-
-      function sanitizeInput(input) {
-        const div = document.createElement("div");
-        div.textContent = input;
-        return div.innerHTML; // Escapes HTML characters
-      }
-
-      function updateUIState() {
-        if (isProcessing) return; // Prevent UI updates during async operations
-        const isSignedIn = isRegistered && isConnected;
-        const usernameInput = document.getElementById("username");
-        const usernameEntered = usernameInput.value.trim();
-        const targetSelected = document.getElementById("targetId").value.trim();
-        const groupNameEntered = document
-          .getElementById("groupName")
-          .value.trim();
-        const addMemberEntered = document
-          .getElementById("addMemberUsername")
-          .value.trim();
-
-        // User Setup
-        usernameInput.disabled = isSignedIn;
-        document.getElementById("registerUser").disabled =
-          isSignedIn || !usernameEntered || isProcessing;
-        document.getElementById("loginUser").disabled =
-          isSignedIn || !usernameEntered || isProcessing;
-        document.getElementById("logoutUser").disabled =
-          !isSignedIn || isProcessing;
-
-        document
-          .getElementById("registerUser")
-          .classList.toggle("hidden", isSignedIn);
-        document
-          .getElementById("loginUser")
-          .classList.toggle("hidden", isSignedIn);
-        document
-          .getElementById("logoutUser")
-          .classList.toggle("hidden", !isSignedIn);
-
-        // Group Creation
-        document.getElementById("groupName").disabled = !isSignedIn;
-        document.getElementById("createGroup").disabled =
-          !isSignedIn || !groupNameEntered || isProcessing;
-
-        // Chat Selection
-        document.getElementById("targetId").disabled = !isSignedIn;
-        document.getElementById("isGroup").disabled = !isSignedIn;
-
-        // Message Sending
-        document.getElementById("messageInput").disabled =
-          !isSignedIn || !targetSelected;
-        document.getElementById("sendMessage").disabled =
-          !isSignedIn ||
-          !targetSelected ||
-          !document.getElementById("messageInput").value.trim() ||
-          isProcessing;
-
-        // Group Management
-        document.getElementById("addMemberUsername").disabled =
-          !isSignedIn || !currentGroup;
-        document.getElementById("addMember").disabled =
-          !isSignedIn || !currentGroup || !addMemberEntered || isProcessing;
-      }
-
-      // Attach input event listeners
-      [
-        "username",
-        "groupName",
-        "targetId",
-        "messageInput",
-        "addMemberUsername",
-      ].forEach((id) => {
-        document.getElementById(id).addEventListener("input", () => {
-          document.getElementById(id).classList.remove("error-input");
-          updateUIState();
-        });
-      });
-
-      document.getElementById("isGroup").addEventListener("change", () => {
-        updateUIState();
-        const isGroupChecked = document.getElementById("isGroup").checked;
-        document
-          .getElementById("group-management")
-          .classList.toggle("hidden", !isGroupChecked);
-        if (!isGroupChecked) {
-          currentGroup = null;
-          document.getElementById("group-members").innerHTML = "";
-          document.getElementById("addMemberUsername").value = "";
-        } else {
-          const groupId = document.getElementById("targetId").value.trim();
-          if (groupId && !validateTargetId(groupId)) {
-            joinGroup(groupId);
-          }
-        }
-      });
-
-      async function registerUser() {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        isProcessing = true;
-        updateUIState();
-
-        const usernameInput = document
-          .getElementById("username")
-          .value.trim()
-          .toLowerCase();
-        const validationError = validateUsername(usernameInput, "username");
-        if (validationError) {
-          isProcessing = false;
-          updateUIState();
-          return showToast(validationError, true);
-        }
-        username = usernameInput;
-
-        try {
-          const res = await fetch("http://localhost:8080/users", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: username }),
-          });
-          if (res.status === 409) {
-            throw new Error("Username already exists. Try logging in.");
-          }
-          if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(
-              errorData.error || `Failed to register (${res.status})`
-            );
-          }
-
-          isRegistered = true;
-          showToast(`Registered successfully as ${username}`);
-          appendStatusMessage(`Registered as ${username}`, "text-green-600");
-          await Promise.all([updateAllUsers(), updateGroups()]);
-        } catch (err) {
-          username = null;
-          showToast(`Registration failed: ${err.message}`, true);
-        } finally {
-          isProcessing = false;
-          updateUIState();
-        }
-      }
-
-      async function loginUser() {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        isProcessing = true;
-        updateUIState();
-
-        const usernameInput = document
-          .getElementById("username")
-          .value.trim()
-          .toLowerCase();
-        const validationError = validateUsername(usernameInput, "username");
-        if (validationError) {
-          isProcessing = false;
-          updateUIState();
-          return showToast(validationError, true);
-        }
-        username = usernameInput;
-
-        try {
-          const userRes = await fetch(
-            `http://localhost:8080/users/${encodeURIComponent(username)}`
-          );
-          if (!userRes.ok) {
-            if (userRes.status === 404) {
-              throw new Error("Username not found. Try registering.");
-            }
-            throw new Error(`Failed to verify user (${userRes.status})`);
-          }
-
-          isRegistered = true;
-          await connect();
-        } catch (err) {
-          username = null;
-          isRegistered = false;
-          isConnected = false;
-          showToast(`Login failed: ${err.message}`, true);
-        } finally {
-          isProcessing = false;
-          updateUIState();
-        }
-      }
-
-      async function connect() {
-        if (!username) {
-          showToast("Please log in or register first", true);
-          isProcessing = false;
-          updateUIState();
-          return;
-        }
-
-        if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.close();
-        }
-
-        try {
-          socket = new WebSocket(
-            `ws://localhost:8080/ws?username=${encodeURIComponent(username)}`
-          );
-
-          socket.onopen = async () => {
-            isConnected = true;
-            reconnectAttempts = 0;
-            showToast("Connected to chat");
-            appendStatusMessage(`Connected as ${username}`, "text-green-600");
-            await Promise.all([updateAllUsers(), updateGroups()]);
-            sendTyping();
-            updateUIState();
+        // Utility Functions
+        function debounce(func, wait) {
+          let timeout;
+          return function (...args) {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func(...args), wait);
           };
+        }
 
-          socket.onmessage = async (event) => {
-            let msg;
+        function showToast(message, isError = false) {
+          if (!message) return;
+          elements.toast.textContent = message;
+          elements.toast.className = `fixed top-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm toast ${
+            isError
+              ? "border-l-4 border-red-500"
+              : "border-l-4 border-green-500"
+          }`;
+          elements.toast.setAttribute("aria-label", message);
+          setTimeout(() => {
+            elements.toast.className =
+              "fixed top-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm toast toast-hidden";
+            elements.toast.removeAttribute("aria-label");
+          }, TOAST_DURATION);
+        }
+
+        function showError(elementId, message) {
+          const errorEl = document.getElementById(`${elementId}-error`);
+          errorEl.textContent = message;
+          errorEl.classList.remove("hidden");
+          document.getElementById(elementId).classList.add("error-input");
+        }
+
+        function clearError(elementId) {
+          const errorEl = document.getElementById(`${elementId}-error`);
+          errorEl.textContent = "";
+          errorEl.classList.add("hidden");
+          document.getElementById(elementId).classList.remove("error-input");
+        }
+
+        function sanitizeInput(input) {
+          if (typeof input !== "string") return "";
+          const div = document.createElement("div");
+          div.textContent = input;
+          return div.innerHTML;
+        }
+
+        function validateInput(input, regex, elementId, errorMessage) {
+          if (!input) {
+            showError(elementId, "Field cannot be empty");
+            return false;
+          }
+          if (!regex.test(input)) {
+            showError(elementId, errorMessage);
+            return false;
+          }
+          clearError(elementId);
+          return true;
+        }
+
+        // UI Updates
+        function updateUIState() {
+          if (state.isProcessing) return;
+          const isSignedIn = state.isRegistered && state.isConnected;
+          const usernameEntered = elements.username.value.trim();
+          const targetSelected = elements.targetId.value.trim();
+          const groupNameEntered = elements.groupName.value.trim();
+          const addMemberEntered = elements.addMemberUsername.value.trim();
+          const messageEntered = elements.messageInput.value.trim();
+
+          // User Setup
+          elements.username.disabled = isSignedIn;
+          elements.registerUser.disabled =
+            isSignedIn || !usernameEntered || state.isProcessing;
+          elements.loginUser.disabled =
+            isSignedIn || !usernameEntered || state.isProcessing;
+          elements.logoutUser.disabled = !isSignedIn || state.isProcessing;
+          elements.registerUser.classList.toggle("hidden", isSignedIn);
+          elements.loginUser.classList.toggle("hidden", isSignedIn);
+          elements.logoutUser.classList.toggle("hidden", !isSignedIn);
+
+          // Group Creation
+          elements.groupName.disabled = !isSignedIn;
+          elements.createGroup.disabled =
+            !isSignedIn || !groupNameEntered || state.isProcessing;
+
+          // Chat Selection
+          elements.targetId.disabled = !isSignedIn;
+          elements.isGroup.disabled = !isSignedIn;
+
+          // Message Sending
+          elements.messageInput.disabled = !isSignedIn || !targetSelected;
+          elements.sendMessage.disabled =
+            !isSignedIn ||
+            !targetSelected ||
+            !messageEntered ||
+            state.isProcessing;
+
+          // Group Management
+          elements.addMemberUsername.disabled =
+            !isSignedIn || !state.currentGroup;
+          elements.addMember.disabled =
+            !isSignedIn ||
+            !state.currentGroup ||
+            !addMemberEntered ||
+            state.isProcessing;
+        }
+
+        function appendMessage(content, id, className, timestamp) {
+          if (!content) return;
+          if (state.displayedMessages.size >= MAX_MESSAGES) {
+            const oldest = elements.messages.firstChild;
+            if (oldest && oldest.dataset.id) {
+              state.displayedMessages.delete(oldest.dataset.id);
+              oldest.remove();
+            }
+          }
+          const msgDiv = document.createElement("div");
+          msgDiv.className = `p-2 rounded text-sm ${className}`;
+          msgDiv.innerHTML = `<div>${content}</div>${
+            timestamp
+              ? `<div class="message-timestamp">${sanitizeInput(
+                  timestamp
+                )}</div>`
+              : ""
+          }`;
+          if (id) {
+            msgDiv.dataset.id = id;
+            state.displayedMessages.add(id);
+          }
+          elements.messages.appendChild(msgDiv);
+          elements.messages.scrollTop = elements.messages.scrollHeight;
+        }
+
+        function appendStatusMessage(content, className) {
+          if (!content) return;
+          if (elements.statusLog.childElementCount >= MAX_MESSAGES) {
+            elements.statusLog.firstChild.remove();
+          }
+          const statusDiv = document.createElement("div");
+          statusDiv.className = `text-sm ${className}`;
+          statusDiv.textContent = content;
+          elements.statusLog.appendChild(statusDiv);
+          elements.statusLog.scrollTop = elements.statusLog.scrollHeight;
+        }
+
+        // WebSocket Management
+        async function connect() {
+          if (!state.username) {
+            showToast("Please log in or register first", true);
+            return false;
+          }
+          if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+            state.socket.close();
+          }
+
+          try {
+            state.socket = new WebSocket(
+              `${WS_BASE}?username=${encodeURIComponent(state.username)}`
+            );
+
+            state.socket.onopen = async () => {
+              state.isConnected = true;
+              state.reconnectAttempts = 0;
+              showToast("Connected to chat");
+              appendStatusMessage(
+                `Connected as ${state.username}`,
+                "text-green-600"
+              );
+              await Promise.all([updateAllUsers(), updateGroups()]);
+              updateUIState();
+            };
+
+            state.socket.onmessage = async (event) => {
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+                if (!msg || !msg.type)
+                  throw new Error("Invalid message format");
+              } catch (err) {
+                console.error("Malformed WebSocket message:", event.data);
+                return;
+              }
+
+              switch (msg.type) {
+                case "message":
+                  if (
+                    msg.id &&
+                    !state.displayedMessages.has(msg.id) &&
+                    ((msg.group_id && msg.group_id === state.targetId) ||
+                      (msg.sender === state.targetId && !msg.group_id) ||
+                      (msg.receiver === state.targetId && !msg.group_id))
+                  ) {
+                    state.displayedMessages.add(msg.id);
+                    const timestamp = msg.timestamp
+                      ? new Date(msg.timestamp).toLocaleString()
+                      : new Date().toLocaleString();
+                    appendMessage(
+                      `[${sanitizeInput(msg.sender)}] ${sanitizeInput(
+                        msg.content
+                      )}`,
+                      msg.id,
+                      msg.sender === state.username
+                        ? "message-own"
+                        : "message-other",
+                      timestamp
+                    );
+                  }
+                  break;
+                case "typing":
+                  if (!msg.group_id)
+                    showTyping(msg.sender, msg.status === "start");
+                  break;
+                case "status":
+                  appendStatusMessage(
+                    `${sanitizeInput(msg.sender)} is ${msg.status}`,
+                    "text-gray-500"
+                  );
+                  if (msg.status === "online") {
+                    state.onlineUsers.add(msg.sender);
+                  } else {
+                    state.onlineUsers.delete(msg.sender);
+                  }
+                  renderAllUsers();
+                  break;
+                // In the WebSocket onmessage handler, inside the switch for "group_update"
+                case "group_update":
+                  const { type: groupUpdateType, data: groupUpdateData } =
+                    msg.data || {};
+                  if (msg.group_id && groupUpdateType && groupUpdateData) {
+                    appendMessage(
+                      `[GROUP/${sanitizeInput(msg.group_id)}] ${sanitizeInput(
+                        groupUpdateType
+                      )}: ${sanitizeInput(JSON.stringify(groupUpdateData))}`,
+                      "",
+                      "text-blue-600 status-message",
+                      new Date().toLocaleString()
+                    );
+                    if (msg.group_id === currentGroup) {
+                      await updateGroupMembers();
+                      if (
+                        groupUpdateType === "kick" &&
+                        groupUpdateData.username === username
+                      ) {
+                        // User was kicked from the group
+                        currentGroup = null;
+                        targetId = null;
+                        document.getElementById("targetId").value = "";
+                        document.getElementById("isGroup").checked = false;
+                        document
+                          .getElementById("group-management")
+                          .classList.add("hidden");
+                        document.getElementById("messages").innerHTML = "";
+                        document.getElementById("chat-context").textContent =
+                          "";
+                        showToast(
+                          `You were kicked from group ${msg.group_id}`,
+                          true
+                        );
+                      }
+                    }
+                    await updateGroups();
+                  }
+                  break;
+                case "error":
+                  showToast(
+                    `WebSocket Error: ${sanitizeInput(
+                      msg.message || "Unknown error"
+                    )}`,
+                    true
+                  );
+                  break;
+                default:
+                  console.warn("Unknown message type:", msg.type);
+              }
+            };
+
+            state.socket.onclose = () => {
+              state.isConnected = false;
+              appendStatusMessage("Disconnected", "text-red-600");
+              showToast("Disconnected from chat", true);
+              elements.groupManagement.classList.add("hidden");
+              attemptReconnect();
+              updateUIState();
+            };
+
+            state.socket.onerror = (error) => {
+              console.error("WebSocket Error:", error);
+              showToast("WebSocket connection error", true);
+              state.isConnected = false;
+              updateUIState();
+            };
+
+            return true;
+          } catch (err) {
+            showToast(`Failed to initiate WebSocket: ${err.message}`, true);
+            return false;
+          }
+        }
+
+        function attemptReconnect() {
+          if (
+            state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS ||
+            !state.username
+          ) {
+            showToast(
+              "Max reconnect attempts reached. Please log in again.",
+              true
+            );
+            return;
+          }
+          state.reconnectAttempts++;
+          showToast(
+            `Reconnecting... (Attempt ${state.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
+          );
+          setTimeout(async () => {
+            if (state.isConnected || state.isProcessing) return;
+            await connect();
+          }, RECONNECT_INTERVAL);
+        }
+
+        // API Calls
+        async function registerUser() {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          state.isProcessing = true;
+          updateUIState();
+
+          const usernameInput = elements.username.value.trim().toLowerCase();
+          if (
+            !validateInput(
+              usernameInput,
+              USERNAME_REGEX,
+              "username",
+              "Username must be 3-20 alphanumeric characters"
+            )
+          ) {
+            state.isProcessing = false;
+            updateUIState();
+            return;
+          }
+          state.username = usernameInput;
+
+          try {
+            const res = await fetch(`${API_BASE}/users`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username: state.username }),
+            });
+            if (res.status === 409) {
+              throw new Error("Username already exists. Try logging in.");
+            }
+            if (!res.ok) {
+              const errorData = await res.json();
+              throw new Error(
+                errorData.error || `Failed to register (${res.status})`
+              );
+            }
+
+            state.isRegistered = true;
+            showToast(`Registered successfully as ${state.username}`);
+            appendStatusMessage(
+              `Registered as ${state.username}`,
+              "text-green-600"
+            );
+            await Promise.all([updateAllUsers(), updateGroups()]);
+          } catch (err) {
+            state.username = null;
+            showToast(`Registration failed: ${err.message}`, true);
+          } finally {
+            state.isProcessing = false;
+            updateUIState();
+          }
+        }
+
+        async function loginUser() {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          state.isProcessing = true;
+          updateUIState();
+
+          const usernameInput = elements.username.value.trim().toLowerCase();
+          if (
+            !validateInput(
+              usernameInput,
+              USERNAME_REGEX,
+              "username",
+              "Username must be 3-20 alphanumeric characters"
+            )
+          ) {
+            state.isProcessing = false;
+            updateUIState();
+            return;
+          }
+          state.username = usernameInput;
+
+          try {
+            const userRes = await fetch(
+              `${API_BASE}/users/${encodeURIComponent(state.username)}`
+            );
+            if (!userRes.ok) {
+              if (userRes.status === 404) {
+                throw new Error("Username not found. Try registering.");
+              }
+              throw new Error(`Failed to verify user (${userRes.status})`);
+            }
+
+            state.isRegistered = true;
+            await connect();
+          } catch (err) {
+            state.username = null;
+            state.isRegistered = false;
+            showToast(`Login failed: ${err.message}`, true);
+          } finally {
+            state.isProcessing = false;
+            updateUIState();
+          }
+        }
+
+        async function logoutUser() {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          state.isProcessing = true;
+          updateUIState();
+
+          if (state.socket) {
             try {
-              msg = JSON.parse(event.data);
-              if (!msg || !msg.type) throw new Error("Invalid message format");
+              state.socket.close();
             } catch (err) {
-              console.error("Malformed WebSocket message:", event.data);
+              console.warn("Error closing WebSocket:", err);
+            }
+            state.socket = null;
+          }
+
+          state.isRegistered = false;
+          state.isConnected = false;
+          state.username = null;
+          state.targetId = null;
+          state.currentGroup = null;
+          state.displayedMessages.clear();
+          state.allUsers = [];
+          state.onlineUsers.clear();
+          state.groups = [];
+          state.reconnectAttempts = 0;
+
+          elements.username.value = "";
+          elements.targetId.value = "";
+          elements.groupName.value = "";
+          elements.addMemberUsername.value = "";
+          elements.messages.innerHTML = "";
+          elements.statusLog.innerHTML = "";
+          elements.allUsers.innerHTML = "";
+          elements.groups.innerHTML = "";
+          elements.groupMembers.innerHTML = "";
+          elements.chatContext.textContent = "";
+          elements.typingStatus.textContent = "";
+          elements.groupManagement.classList.add("hidden");
+
+          if (state.typingTimeout) {
+            clearTimeout(state.typingTimeout);
+            state.typingTimeout = null;
+          }
+
+          showToast("Logged out successfully");
+          state.isProcessing = false;
+          updateUIState();
+        }
+
+        async function createGroup() {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          state.isProcessing = true;
+          updateUIState();
+
+          const groupName = elements.groupName.value.trim();
+          if (
+            !validateInput(
+              groupName,
+              GROUP_NAME_REGEX,
+              "groupName",
+              "Group name must be 3-50 characters (alphanumeric, spaces, hyphens)"
+            )
+          ) {
+            state.isProcessing = false;
+            updateUIState();
+            return;
+          }
+          if (!state.username || !state.isConnected) {
+            state.isProcessing = false;
+            updateUIState();
+            return showToast("You must be logged in to create a group", true);
+          }
+
+          try {
+            elements.createGroup.disabled = true;
+            const res = await fetch(`${API_BASE}/groups`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: groupName, owner: state.username }),
+            });
+            if (!res.ok) {
+              const errorData = await res.json();
+              throw new Error(
+                errorData.error || `Failed to create group (${res.status})`
+              );
+            }
+            const group = await res.json();
+            appendStatusMessage(
+              `Created group ${sanitizeInput(group.name)} (${group.id})`,
+              "text-green-600"
+            );
+            await updateGroups();
+            elements.groupName.value = "";
+            showToast("Group created successfully");
+          } catch (err) {
+            showToast(`Failed to create group: ${err.message}`, true);
+          } finally {
+            state.isProcessing = false;
+            updateUIState();
+          }
+        }
+
+        async function updateAllUsers() {
+          try {
+            const allRes = await fetch(`${API_BASE}/users`);
+            if (!allRes.ok)
+              throw new Error(`Failed to fetch users (${allRes.status})`);
+            state.allUsers = await allRes.json();
+
+            if (state.isConnected) {
+              const onlineRes = await fetch(`${API_BASE}/users/online`);
+              if (!onlineRes.ok)
+                throw new Error(
+                  `Failed to fetch online users (${onlineRes.status})`
+                );
+              const onlineUsers = await onlineRes.json();
+              state.onlineUsers.clear();
+              onlineUsers.forEach((u) => {
+                if (u.username) state.onlineUsers.add(u.username);
+              });
+            } else {
+              state.onlineUsers.clear();
+            }
+
+            renderAllUsers();
+          } catch (err) {
+            showToast(`Error fetching users: ${err.message}`, true);
+            elements.allUsers.innerHTML = `<p class="text-red-500">Could not load users.</p>`;
+          }
+        }
+
+        function renderAllUsers() {
+          if (!state.allUsers.length) {
+            elements.allUsers.innerHTML = "<p>No users found.</p>";
+            return;
+          }
+
+          elements.allUsers.innerHTML = state.allUsers
+            .filter((u) => u.username)
+            .map((u) => {
+              const isOnline = state.onlineUsers.has(u.username);
+              const statusClass = isOnline
+                ? "user-status-online"
+                : "user-status-offline";
+              const statusText = isOnline ? "Online" : "Offline";
+              const chatButton =
+                u.username !== state.username
+                  ? `<button onclick="ChatApp.startChat('${sanitizeInput(
+                      u.username
+                    )}', false)" class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      !state.isConnected ? "hidden" : ""
+                    }" ${
+                      !state.isConnected ? "disabled" : ""
+                    } aria-label="Chat with ${u.username}">Chat</button>`
+                  : "(You)";
+
+              return `
+                <div class="flex items-center justify-between p-1 hover:bg-gray-100 rounded text-sm">
+                  <span>
+                    ${sanitizeInput(
+                      u.username
+                    )} <span class="${statusClass}">(${statusText})</span>
+                  </span>
+                  ${chatButton}
+                </div>
+              `;
+            })
+            .join("");
+        }
+
+        async function updateGroups() {
+          if (!state.username || !state.isRegistered) {
+            elements.groups.innerHTML = "";
+            return;
+          }
+
+          try {
+            const res = await fetch(
+              `${API_BASE}/users/${encodeURIComponent(state.username)}/groups`
+            );
+            if (!res.ok) {
+              if (res.status === 404) {
+                elements.groups.innerHTML = "<p>No groups joined.</p>";
+                return;
+              }
+              throw new Error(`Failed to fetch groups (${res.status})`);
+            }
+            state.groups = await res.json();
+            if (!state.groups.length) {
+              elements.groups.innerHTML = "<p>No groups joined.</p>";
               return;
             }
 
-            switch (msg.type) {
-              case "message":
-                if (
-                  msg.id &&
-                  !displayedMessages.has(msg.id) &&
-                  ((msg.group_id && msg.group_id === targetId) ||
-                    (msg.sender === targetId && !msg.group_id) ||
-                    (msg.receiver === targetId && !msg.group_id))
-                ) {
-                  displayedMessages.add(msg.id);
+            elements.groups.innerHTML = state.groups
+              .filter((g) => g.id && g.name)
+              .map(
+                (g) => `
+                <div class="flex items-center justify-between p-2 hover:bg-gray-100 rounded">
+                  <span>${sanitizeInput(g.name)} (${sanitizeInput(g.id)})</span>
+                  <button onclick="ChatApp.joinGroup('${sanitizeInput(
+                    g.id
+                  )}')" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  !state.isConnected ? "hidden" : ""
+                }" ${
+                  !state.isConnected ? "disabled" : ""
+                } aria-label="Join group ${g.name}">Chat</button>
+                </div>
+              `
+              )
+              .join("");
+          } catch (err) {
+            showToast(`Error fetching groups: ${err.message}`, true);
+            elements.groups.innerHTML = `<p class="text-red-500">Could not load groups.</p>`;
+          }
+        }
+
+        async function joinGroup(groupId) {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          if (!state.isConnected)
+            return showToast("Login first to join a group", true);
+          if (
+            !validateInput(
+              groupId,
+              ID_REGEX,
+              "targetId",
+              "Group ID must be 1-50 alphanumeric characters or hyphens"
+            )
+          ) {
+            return;
+          }
+
+          state.isProcessing = true;
+          updateUIState();
+
+          try {
+            const res = await fetch(
+              `${API_BASE}/groups/${encodeURIComponent(groupId)}`
+            );
+            if (!res.ok) {
+              if (res.status === 404) throw new Error("Group not found");
+              if (res.status === 403) throw new Error("Access to group denied");
+              throw new Error(`Failed to fetch group details (${res.status})`);
+            }
+            const group = await res.json();
+            if (!group.id || !group.name || !Array.isArray(group.members)) {
+              throw new Error("Invalid group data received");
+            }
+            if (!group.members.includes(state.username)) {
+              throw new Error("You are not a member of this group");
+            }
+
+            if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+              state.socket.send(
+                JSON.stringify({
+                  type: "join_group",
+                  sender: state.username,
+                  group_id: groupId,
+                })
+              );
+            } else {
+              throw new Error("WebSocket not connected");
+            }
+
+            state.currentGroup = groupId;
+            state.targetId = groupId;
+            elements.targetId.value = groupId;
+            elements.isGroup.checked = true;
+            elements.groupManagement.classList.remove("hidden");
+            state.displayedMessages.clear();
+            elements.messages.innerHTML = "";
+            elements.typingStatus.textContent = "";
+
+            await updateChatHeader(groupId, true);
+            await loadMessageHistory(groupId, true);
+            await updateGroupMembers();
+
+            appendStatusMessage(
+              `Joined group chat ${sanitizeInput(group.name)} (${sanitizeInput(
+                groupId
+              )})`,
+              "text-blue-600"
+            );
+            showToast(`Joined group ${sanitizeInput(group.name)}`);
+          } catch (err) {
+            showToast(`Failed to join group: ${err.message}`, true);
+            elements.groupManagement.classList.add("hidden");
+          } finally {
+            state.isProcessing = false;
+            updateUIState();
+          }
+        }
+
+        async function updateGroupMembers() {
+          if (!state.currentGroup || !state.isConnected) {
+            elements.groupMembers.innerHTML = "";
+            return;
+          }
+
+          try {
+            const res = await fetch(
+              `${API_BASE}/groups/${encodeURIComponent(state.currentGroup)}`
+            );
+            if (!res.ok) {
+              if (res.status === 404) throw new Error("Group not found");
+              throw new Error(`Failed to fetch group details (${res.status})`);
+            }
+            const group = await res.json();
+            const isOwner = group.owner === state.username;
+            const isAdmin =
+              group.admins && group.admins.includes(state.username);
+            const memberUsernames = group.members || [];
+            const adminUsernames = new Set(group.admins || []);
+
+            if (!memberUsernames.length) {
+              elements.groupMembers.innerHTML = "<p>No members in group.</p>";
+              return;
+            }
+
+            elements.groupMembers.innerHTML = memberUsernames
+              .filter((m) => m)
+              .map((memberUsername) => {
+                const memberIsAdmin = adminUsernames.has(memberUsername);
+                const memberIsOwner = memberUsername === group.owner;
+                const showKick =
+                  (isOwner || isAdmin) &&
+                  memberUsername !== state.username &&
+                  !memberIsOwner;
+                const showAdminToggle =
+                  isOwner &&
+                  memberUsername !== state.username &&
+                  !memberIsOwner;
+
+                return `
+                  <div class="flex items-center justify-between p-1 hover:bg-gray-100 rounded text-sm">
+                    <span>
+                      ${sanitizeInput(memberUsername)}
+                      ${memberIsAdmin ? " (Admin)" : ""}
+                      ${memberIsOwner ? " (Owner)" : ""}
+                    </span>
+                    <div class="space-x-1">
+                      ${
+                        showKick
+                          ? `<button onclick="ChatApp.kickMember('${sanitizeInput(
+                              memberUsername
+                            )}')" class="bg-red-500 text-white px-1 py-0.5 rounded text-xs hover:bg-red-600 focus:outline-none focus:ring-1 focus:ring-red-500" ${
+                              state.isProcessing ? "disabled" : ""
+                            } aria-label="Kick ${memberUsername} from group">Kick</button>`
+                          : ""
+                      }
+                      ${
+                        showAdminToggle
+                          ? memberIsAdmin
+                            ? `<button onclick="ChatApp.removeAdmin('${sanitizeInput(
+                                memberUsername
+                              )}')" class="bg-yellow-500 text-white px-1 py-0.5 rounded text-xs hover:bg-yellow-600 focus:outline-none focus:ring-1 focus:ring-yellow-500" ${
+                                state.isProcessing ? "disabled" : ""
+                              } aria-label="Remove admin status from ${memberUsername}">Remove Admin</button>`
+                            : `<button onclick="ChatApp.addAdmin('${sanitizeInput(
+                                memberUsername
+                              )}')" class="bg-green-500 text-white px-1 py-0.5 rounded text-xs hover:bg-green-600 focus:outline-none focus:ring-1 focus:ring-green-500" ${
+                                state.isProcessing ? "disabled" : ""
+                              } aria-label="Make ${memberUsername} admin">Make Admin</button>`
+                          : ""
+                      }
+                    </div>
+                  </div>
+                `;
+              })
+              .join("");
+          } catch (err) {
+            showToast(`Error fetching group members: ${err.message}`, true);
+            elements.groupMembers.innerHTML = `<p class="text-red-500">Could not load members.</p>`;
+          }
+        }
+
+        async function startChat(targetUsername, isGroup) {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          if (!state.isConnected)
+            return showToast("Login first to start a chat", true);
+          if (
+            !validateInput(
+              targetUsername,
+              ID_REGEX,
+              "targetId",
+              "Target ID must be 1-50 alphanumeric characters or hyphens"
+            )
+          ) {
+            return;
+          }
+          if (
+            !isGroup &&
+            targetUsername.toLowerCase() === state.username.toLowerCase()
+          ) {
+            return showToast("Cannot chat with yourself", true);
+          }
+
+          state.isProcessing = true;
+          updateUIState();
+
+          try {
+            if (isGroup) {
+              await joinGroup(targetUsername);
+            } else {
+              const res = await fetch(
+                `${API_BASE}/users/${encodeURIComponent(targetUsername)}`
+              );
+              if (!res.ok) {
+                if (res.status === 404) throw new Error("User not found");
+                throw new Error(`Failed to verify user (${res.status})`);
+              }
+
+              state.targetId = targetUsername;
+              state.currentGroup = null;
+              elements.targetId.value = targetUsername;
+              elements.isGroup.checked = false;
+              elements.groupManagement.classList.add("hidden");
+              state.displayedMessages.clear();
+              elements.messages.innerHTML = "";
+              elements.typingStatus.textContent = "";
+
+              appendStatusMessage(
+                `Started chat with ${sanitizeInput(targetUsername)}`,
+                "text-blue-600"
+              );
+              await loadMessageHistory(targetUsername, false);
+              await updateChatHeader(targetUsername, false);
+            }
+          } catch (err) {
+            showToast(`Failed to start chat: ${err.message}`, true);
+          } finally {
+            state.isProcessing = false;
+            updateUIState();
+          }
+        }
+
+        async function updateChatHeader(id, isGroup) {
+          try {
+            if (isGroup) {
+              const res = await fetch(
+                `${API_BASE}/groups/${encodeURIComponent(id)}`
+              );
+              if (!res.ok) {
+                if (res.status === 404) throw new Error("Group not found");
+                throw new Error(`Failed to fetch group (${res.status})`);
+              }
+              const group = await res.json();
+              elements.chatContext.textContent = `(Group: ${sanitizeInput(
+                group.name || id
+              )})`;
+            } else {
+              elements.chatContext.textContent = `(User: ${sanitizeInput(id)})`;
+            }
+          } catch (err) {
+            showToast(`Error updating chat header: ${err.message}`, true);
+            elements.chatContext.textContent = `(ID: ${sanitizeInput(id)})`;
+          }
+        }
+
+        async function loadMessageHistory(id, isGroup) {
+          elements.loading.classList.remove("hidden");
+          try {
+            const url = isGroup
+              ? `${API_BASE}/groups/${encodeURIComponent(id)}/messages`
+              : `${API_BASE}/users/${encodeURIComponent(
+                  state.username
+                )}/messages/${encodeURIComponent(id)}`;
+            const res = await fetch(url);
+            if (!res.ok) {
+              if (res.status === 404) {
+                throw new Error(isGroup ? "Group not found" : "Chat not found");
+              }
+              throw new Error(
+                `Failed to fetch message history (${res.status})`
+              );
+            }
+            const messages = await res.json();
+            state.displayedMessages.clear();
+            elements.messages.innerHTML = "";
+
+            if (!messages || messages.length === 0) {
+              appendMessage("No messages yet.", "", "empty-chat", "");
+            } else {
+              messages.forEach((msg) => {
+                if (msg.id && !state.displayedMessages.has(msg.id)) {
+                  state.displayedMessages.add(msg.id);
                   const timestamp = msg.timestamp
-                    ? new Date(msg.timestamp).toLocaleString()
+                    ? isNaN(Date.parse(msg.timestamp))
+                      ? new Date().toLocaleString()
+                      : new Date(msg.timestamp).toLocaleString()
                     : new Date().toLocaleString();
                   appendMessage(
                     `[${sanitizeInput(msg.sender)}] ${sanitizeInput(
                       msg.content
                     )}`,
                     msg.id,
-                    msg.sender === username ? "message-own" : "message-other",
+                    msg.sender === state.username
+                      ? "message-own"
+                      : "message-other",
                     timestamp
                   );
                 }
-                break;
-              case "typing":
-                if (!msg.group_id)
-                  showTyping(msg.sender, msg.status === "start");
-                break;
-              case "status":
-                appendStatusMessage(
-                  `${sanitizeInput(msg.sender)} is ${msg.status}`,
-                  "text-gray-500"
-                );
-                if (msg.status === "online") {
-                  onlineUsersCache.add(msg.sender);
-                } else {
-                  onlineUsersCache.delete(msg.sender);
-                }
-                renderAllUsers();
-                break;
-              case "group_update":
-                const { type: groupUpdateType, data: groupUpdateData } =
-                  msg.data || {};
-                if (msg.group_id && groupUpdateType && groupUpdateData) {
-                  appendMessage(
-                    `[GROUP/${sanitizeInput(msg.group_id)}] ${sanitizeInput(
-                      groupUpdateType
-                    )}: ${sanitizeInput(JSON.stringify(groupUpdateData))}`,
-                    "",
-                    "text-blue-600 status-message",
-                    new Date().toLocaleString()
-                  );
-                  if (msg.group_id === currentGroup) await updateGroupMembers();
-                  await updateGroups();
-                }
-                break;
-              case "error":
-                showToast(
-                  `WebSocket Error: ${sanitizeInput(
-                    msg.message || "Unknown error"
-                  )}`,
-                  true
-                );
-                break;
-              default:
-                console.warn("Unknown message type:", msg.type);
+              });
             }
-          };
-
-          socket.onclose = () => {
-            appendStatusMessage(`Disconnected`, "text-red-600");
-            isConnected = false;
-            isRegistered = false;
-            username = null;
-            targetId = null;
-            currentGroup = null;
-            displayedMessages.clear();
-            onlineUsersCache.clear();
-            renderAllUsers();
-            showToast("Disconnected from chat", true);
-            document.getElementById("group-management").classList.add("hidden");
-            attemptReconnect();
-            updateUIState();
-          };
-
-          socket.onerror = (error) => {
-            console.error("WebSocket Error:", error);
-            showToast("WebSocket connection error", true);
-            isConnected = false;
-            isRegistered = false;
-            username = null;
-            targetId = null;
-            currentGroup = null;
-            displayedMessages.clear();
-            onlineUsersCache.clear();
-            renderAllUsers();
-            updateUIState();
-          };
-        } catch (err) {
-          showToast(`Failed to initiate WebSocket: ${err.message}`, true);
-          isProcessing = false;
-          updateUIState();
-        }
-      }
-
-      function attemptReconnect() {
-        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS || !username) {
-          showToast(
-            "Max reconnect attempts reached. Please log in again.",
-            true
-          );
-          return;
-        }
-        reconnectAttempts++;
-        showToast(
-          `Reconnecting... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
-        );
-        setTimeout(() => {
-          if (isConnected || isProcessing) return;
-          connect();
-        }, RECONNECT_INTERVAL);
-      }
-
-      function logoutUser() {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        isProcessing = true;
-        updateUIState();
-
-        if (socket) {
-          try {
-            socket.close();
           } catch (err) {
-            console.warn("Error closing WebSocket:", err);
-          }
-          socket = null;
-        }
-
-        isRegistered = false;
-        isConnected = false;
-        username = null;
-        targetId = null;
-        currentGroup = null;
-        displayedMessages.clear();
-        allUsersCache = [];
-        onlineUsersCache.clear();
-        reconnectAttempts = 0;
-
-        document.getElementById("username").value = "";
-        document.getElementById("targetId").value = "";
-        document.getElementById("groupName").value = "";
-        document.getElementById("addMemberUsername").value = "";
-        document.getElementById("messages").innerHTML = "";
-        document.getElementById("status-log").innerHTML = "";
-        document.getElementById("all-users").innerHTML = "";
-        document.getElementById("groups").innerHTML = "";
-        document.getElementById("group-members").innerHTML = "";
-        document.getElementById("chat-context").textContent = "";
-        document.getElementById("typing-status").textContent = "";
-        document.getElementById("group-management").classList.add("hidden");
-
-        if (typingTimeout) {
-          clearTimeout(typingTimeout);
-          typingTimeout = null;
-        }
-
-        showToast("Logged out successfully");
-        isProcessing = false;
-        updateUIState();
-      }
-
-      async function createGroup() {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        isProcessing = true;
-        updateUIState();
-
-        const groupName = document.getElementById("groupName").value.trim();
-        const validationError = validateGroupName(groupName);
-        if (validationError) {
-          isProcessing = false;
-          updateUIState();
-          return showToast(validationError, true);
-        }
-        if (!username || !isConnected) {
-          isProcessing = false;
-          updateUIState();
-          return showToast("You must be logged in to create a group", true);
-        }
-
-        try {
-          document.getElementById("createGroup").disabled = true;
-          const res = await fetch("http://localhost:8080/groups", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: groupName, owner: username }),
-          });
-          if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(
-              errorData.error || `Failed to create group (${res.status})`
+            showToast(`Error loading messages: ${err.message}`, true);
+            appendMessage(
+              `Failed to load message history.`,
+              "",
+              "text-red-500 status-message",
+              new Date().toLocaleString()
             );
+          } finally {
+            elements.loading.classList.add("hidden");
           }
-          const group = await res.json();
-          appendStatusMessage(
-            `Created group ${sanitizeInput(group.name)} (${group.id})`,
-            "text-green-600"
-          );
-          await updateGroups();
-          document.getElementById("groupName").value = "";
-          showToast("Group created successfully");
-        } catch (err) {
-          showToast(`Failed to create group: ${err.message}`, true);
-        } finally {
-          isProcessing = false;
-          updateUIState();
         }
-      }
 
-      async function updateAllUsers() {
-        try {
-          const allRes = await fetch("http://localhost:8080/users");
-          if (!allRes.ok)
-            throw new Error(`Failed to fetch users (${allRes.status})`);
-          allUsersCache = await allRes.json();
-
-          if (isConnected) {
-            const onlineRes = await fetch("http://localhost:8080/users/online");
-            if (!onlineRes.ok)
-              throw new Error(
-                `Failed to fetch online users (${onlineRes.status})`
-              );
-            const onlineUsers = await onlineRes.json();
-            onlineUsersCache.clear();
-            onlineUsers.forEach((u) => {
-              if (u.username) onlineUsersCache.add(u.username);
-            });
-          } else {
-            onlineUsersCache.clear();
+        async function addMember() {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          if (!state.currentGroup || !state.username) {
+            return showToast("Select a group and ensure logged in", true);
           }
 
-          renderAllUsers();
-        } catch (err) {
-          showToast(`Error fetching users: ${err.message}`, true);
-          document.getElementById(
-            "all-users"
-          ).innerHTML = `<p class="text-red-500">Could not load users.</p>`;
-        }
-      }
-
-      function renderAllUsers() {
-        const el = document.getElementById("all-users");
-        if (!allUsersCache || allUsersCache.length === 0) {
-          el.innerHTML = "<p>No users found.</p>";
-          return;
-        }
-
-        el.innerHTML = allUsersCache
-          .map((u) => {
-            if (!u.username) return "";
-            const isOnline = onlineUsersCache.has(u.username);
-            const statusClass = isOnline
-              ? "user-status-online"
-              : "user-status-offline";
-            const statusText = isOnline ? "Online" : "Offline";
-            const chatButton =
-              u.username !== username
-                ? `<button onclick="startChat('${sanitizeInput(
-                    u.username
-                  )}', false)" class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    !isConnected ? "hidden" : ""
-                  }" ${!isConnected ? "disabled" : ""}>Chat</button>`
-                : "(You)";
-
-            return `
-              <div class="flex items-center justify-between p-1 hover:bg-gray-100 rounded text-sm">
-                <span>
-                  ${sanitizeInput(
-                    u.username
-                  )} <span class="${statusClass}">(${statusText})</span>
-                </span>
-                ${chatButton}
-              </div>
-            `;
-          })
-          .filter(Boolean)
-          .join("");
-      }
-
-      async function updateGroups() {
-        if (!username || !isRegistered) {
-          document.getElementById("groups").innerHTML = "";
-          return;
-        }
-
-        try {
-          const res = await fetch(
-            `http://localhost:8080/users/${encodeURIComponent(username)}/groups`
-          );
-          if (!res.ok) {
-            if (res.status === 404) {
-              document.getElementById("groups").innerHTML =
-                "<p>No groups joined.</p>";
-              return;
-            }
-            throw new Error(`Failed to fetch groups (${res.status})`);
-          }
-          const groups = await res.json();
-          const el = document.getElementById("groups");
-          if (!groups || groups.length === 0) {
-            el.innerHTML = "<p>No groups joined.</p>";
+          const memberUsername = elements.addMemberUsername.value
+            .trim()
+            .toLowerCase();
+          if (
+            !validateInput(
+              memberUsername,
+              USERNAME_REGEX,
+              "addMemberUsername",
+              "Username must be 3-20 alphanumeric characters"
+            )
+          ) {
             return;
           }
 
-          el.innerHTML = groups
-            .map((g) => {
-              if (!g.id || !g.name) return "";
-              return `
-                <div class="flex items-center justify-between p-2 hover:bg-gray-100 rounded">
-                  <span>${sanitizeInput(g.name)} (${sanitizeInput(g.id)})</span>
-                  <button onclick="joinGroup('${sanitizeInput(
-                    g.id
-                  )}')" class="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                !isConnected ? "hidden" : ""
-              }" ${!isConnected ? "disabled" : ""}>Chat</button>
-                </div>
-              `;
-            })
-            .filter(Boolean)
-            .join("");
-        } catch (err) {
-          showToast(`Error fetching groups: ${err.message}`, true);
-          document.getElementById(
-            "groups"
-          ).innerHTML = `<p class="text-red-500">Could not load groups.</p>`;
-        }
-      }
-
-      async function joinGroup(groupId) {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        if (!isConnected) return showToast("Login first to join a group", true);
-
-        const validationError = validateTargetId(groupId);
-        if (validationError) return showToast(validationError, true);
-
-        isProcessing = true;
-        updateUIState();
-
-        try {
-          // Fetch group details
-          const res = await fetch(
-            `http://localhost:8080/groups/${encodeURIComponent(groupId)}`
-          );
-          if (!res.ok) {
-            if (res.status === 404) throw new Error("Group not found");
-            if (res.status === 403) throw new Error("Access to group denied");
-            throw new Error(`Failed to fetch group details (${res.status})`);
-          }
-          const group = await res.json();
-
-          // Validate group data
-          if (!group.id || !group.name || !Array.isArray(group.members)) {
-            throw new Error("Invalid group data received");
-          }
-          if (!group.members.includes(username)) {
-            throw new Error("You are not a member of this group");
-          }
-
-          // Send join_group WebSocket message
-          if (socket && socket.readyState === WebSocket.OPEN) {
-            try {
-              socket.send(
-                JSON.stringify({
-                  type: "join_group",
-                  sender: username,
-                  group_id: groupId,
-                })
-              );
-            } catch (err) {
-              throw new Error("Failed to join group: WebSocket error");
-            }
-          } else {
-            throw new Error("WebSocket not connected");
-          }
-
-          // Update state and UI
-          currentGroup = groupId;
-          targetId = groupId;
-          document.getElementById("targetId").value = groupId;
-          document.getElementById("isGroup").checked = true;
-          document
-            .getElementById("group-management")
-            .classList.remove("hidden");
-          document.getElementById("messages").innerHTML = "";
-          document.getElementById("typing-status").textContent = "";
-          displayedMessages.clear();
-
-          // Update chat header and load messages
-          await updateChatHeader(groupId, true);
-          await loadMessageHistory(groupId, true);
-          await updateGroupMembers();
-
-          appendStatusMessage(
-            `Joined group chat ${sanitizeInput(group.name)} (${sanitizeInput(
-              groupId
-            )})`,
-            "text-blue-600"
-          );
-          showToast(`Joined group ${sanitizeInput(group.name)}`);
-        } catch (err) {
-          showToast(`Failed to join group: ${err.message}`, true);
-          document.getElementById("group-management").classList.add("hidden");
-        } finally {
-          isProcessing = false;
+          state.isProcessing = true;
           updateUIState();
-        }
-      }
 
-      async function updateGroupMembers() {
-        if (!currentGroup || !isConnected) {
-          document.getElementById("group-members").innerHTML = "";
-          return;
-        }
-
-        try {
-          const res = await fetch(
-            `http://localhost:8080/groups/${encodeURIComponent(currentGroup)}`
-          );
-          if (!res.ok) {
-            if (res.status === 404) throw new Error("Group not found");
-            throw new Error(`Failed to fetch group details (${res.status})`);
-          }
-          const group = await res.json();
-          const isOwner = group.owner === username;
-          const isAdmin = group.admins && group.admins.includes(username);
-          const memberUsernames = group.members || [];
-          const adminUsernames = new Set(group.admins || []);
-
-          const el = document.getElementById("group-members");
-          if (!memberUsernames.length) {
-            el.innerHTML = "<p>No members in group.</p>";
-            return;
-          }
-
-          el.innerHTML = memberUsernames
-            .map((memberUsername) => {
-              if (!memberUsername) return "";
-              const memberIsAdmin = adminUsernames.has(memberUsername);
-              const memberIsOwner = memberUsername === group.owner;
-              const showKick =
-                (isOwner || isAdmin) &&
-                memberUsername !== username &&
-                !memberIsOwner;
-              const showAdminToggle =
-                isOwner && memberUsername !== username && !memberIsOwner;
-
-              return `
-                <div class="flex items-center justify-between p-1 hover:bg-gray-100 rounded text-sm">
-                  <span>
-                    ${sanitizeInput(memberUsername)}
-                    ${memberIsAdmin ? " (Admin)" : ""}
-                    ${memberIsOwner ? " (Owner)" : ""}
-                  </span>
-                  <div class="space-x-1">
-                    ${
-                      showKick
-                        ? `
-                      <button onclick="kickMember('${sanitizeInput(
-                        memberUsername
-                      )}')" class="bg-red-500 text-white px-1 py-0.5 rounded text-xs hover:bg-red-600 focus:outline-none focus:ring-1 focus:ring-red-500" ${
-                            isProcessing ? "disabled" : ""
-                          }>Kick</button>
-                    `
-                        : ""
-                    }
-                    ${
-                      showAdminToggle
-                        ? `
-                      ${
-                        memberIsAdmin
-                          ? `<button onclick="removeAdmin('${sanitizeInput(
-                              memberUsername
-                            )}')" class="bg-yellow-500 text-white px-1 py-0.5 rounded text-xs hover:bg-yellow-600 focus:outline-none focus:ring-1 focus:ring-yellow-500" ${
-                              isProcessing ? "disabled" : ""
-                            }>Remove Admin</button>`
-                          : `<button onclick="addAdmin('${sanitizeInput(
-                              memberUsername
-                            )}')" class="bg-green-500 text-white px-1 py-0.5 rounded text-xs hover:bg-green-600 focus:outline-none focus:ring-1 focus:ring-green-500" ${
-                              isProcessing ? "disabled" : ""
-                            }>Make Admin</button>`
-                      }
-                    `
-                        : ""
-                    }
-                  </div>
-                </div>
-              `;
-            })
-            .filter(Boolean)
-            .join("");
-        } catch (err) {
-          showToast(`Error fetching group members: ${err.message}`, true);
-          document.getElementById(
-            "group-members"
-          ).innerHTML = `<p class="text-red-500">Could not load members.</p>`;
-        }
-      }
-
-      async function startChat(targetUsername, isGroup) {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        if (!isConnected) return showToast("Login first to start a chat", true);
-
-        const validationError = validateTargetId(targetUsername);
-        if (validationError) return showToast(validationError, true);
-
-        if (
-          !isGroup &&
-          targetUsername.toLowerCase() === username.toLowerCase()
-        ) {
-          return showToast("Cannot chat with yourself", true);
-        }
-
-        isProcessing = true;
-        updateUIState();
-
-        try {
-          if (isGroup) {
-            await joinGroup(targetUsername);
-          } else {
+          try {
+            elements.addMember.disabled = true;
             const res = await fetch(
-              `http://localhost:8080/users/${encodeURIComponent(
-                targetUsername
-              )}`
-            );
-            if (!res.ok) {
-              if (res.status === 404) throw new Error("User not found");
-              throw new Error(`Failed to verify user (${res.status})`);
-            }
-
-            targetId = targetUsername;
-            currentGroup = null;
-            document.getElementById("targetId").value = targetId;
-            document.getElementById("isGroup").checked = false;
-            document.getElementById("group-management").classList.add("hidden");
-            displayedMessages.clear();
-            document.getElementById("messages").innerHTML = "";
-            document.getElementById("typing-status").textContent = "";
-
-            appendStatusMessage(
-              `Started chat with ${sanitizeInput(targetId)}`,
-              "text-blue-600"
-            );
-            await loadMessageHistory(targetUsername, false);
-            await updateChatHeader(targetUsername, false);
-            sendTyping();
-          }
-        } catch (err) {
-          showToast(`Failed to start chat: ${err.message}`, true);
-        } finally {
-          isProcessing = false;
-          updateUIState();
-        }
-      }
-
-      async function updateChatHeader(id, isGroup) {
-        try {
-          if (isGroup) {
-            const res = await fetch(
-              `http://localhost:8080/groups/${encodeURIComponent(id)}`
-            );
-            if (!res.ok) {
-              if (res.status === 404) throw new Error("Group not found");
-              throw new Error(`Failed to fetch group (${res.status})`);
-            }
-            const group = await res.json();
-            currentChatName = group.name || id;
-            document.getElementById(
-              "chat-context"
-            ).textContent = `(Group: ${sanitizeInput(group.name || id)})`;
-          } else {
-            currentChatName = id;
-            document.getElementById(
-              "chat-context"
-            ).textContent = `(User: ${sanitizeInput(id)})`;
-          }
-        } catch (err) {
-          showToast(`Error updating chat header: ${err.message}`, true);
-          document.getElementById(
-            "chat-context"
-          ).textContent = `(ID: ${sanitizeInput(id)})`;
-        }
-      }
-
-      async function loadMessageHistory(id, isGroup) {
-        document.getElementById("loading").classList.remove("hidden");
-        try {
-          const url = isGroup
-            ? `http://localhost:8080/groups/${encodeURIComponent(id)}/messages`
-            : `http://localhost:8080/users/${encodeURIComponent(
-                username
-              )}/messages/${encodeURIComponent(id)}`;
-          const res = await fetch(url);
-          if (!res.ok) {
-            if (res.status === 404)
-              throw new Error(isGroup ? "Group not found" : "Chat not found");
-            throw new Error(`Failed to fetch message history (${res.status})`);
-          }
-          const messages = await res.json();
-          displayedMessages.clear();
-          document.getElementById("messages").innerHTML = "";
-
-          if (!messages || messages.length === 0) {
-            appendMessage("No messages yet.", "", "empty-chat", "");
-          } else {
-            messages.forEach((msg) => {
-              if (msg.id && !displayedMessages.has(msg.id)) {
-                displayedMessages.add(msg.id);
-                const timestamp = msg.timestamp
-                  ? isNaN(Date.parse(msg.timestamp))
-                    ? new Date().toLocaleString()
-                    : new Date(msg.timestamp).toLocaleString()
-                  : new Date().toLocaleString();
-                appendMessage(
-                  `[${sanitizeInput(msg.sender)}] ${sanitizeInput(
-                    msg.content
-                  )}`,
-                  msg.id,
-                  msg.sender === username ? "message-own" : "message-other",
-                  timestamp
-                );
+              `${API_BASE}/groups/${encodeURIComponent(
+                state.currentGroup
+              )}/members`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  username: memberUsername,
+                  requester: state.username,
+                }),
               }
-            });
-          }
-        } catch (err) {
-          showToast(`Error loading messages: ${err.message}`, true);
-          appendMessage(
-            `Failed to load message history.`,
-            "",
-            "text-red-500 status-message",
-            new Date().toLocaleString()
-          );
-        } finally {
-          document.getElementById("loading").classList.add("hidden");
-        }
-      }
-
-      async function addMember() {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        if (!currentGroup || !username)
-          return showToast("Select a group and ensure logged in", true);
-
-        const memberUsername = document
-          .getElementById("addMemberUsername")
-          .value.trim()
-          .toLowerCase();
-        const validationError = validateUsername(
-          memberUsername,
-          "addMemberUsername"
-        );
-        if (validationError) return showToast(validationError, true);
-
-        isProcessing = true;
-        updateUIState();
-
-        try {
-          document.getElementById("addMember").disabled = true;
-          const res = await fetch(
-            `http://localhost:8080/groups/${encodeURIComponent(
-              currentGroup
-            )}/members`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                username: memberUsername,
-                requester: username,
-              }),
-            }
-          );
-          if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(
-              errorData.error || `Failed to add member (${res.status})`
             );
-          }
-          document.getElementById("addMemberUsername").value = "";
-          await updateGroupMembers();
-          showToast(`Added ${sanitizeInput(memberUsername)} to group`);
-        } catch (err) {
-          showToast(`Error adding member: ${err.message}`, true);
-        } finally {
-          isProcessing = false;
-          updateUIState();
-        }
-      }
-
-      async function kickMember(memberUsername) {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        if (!currentGroup || !username)
-          return showToast("Select a group and ensure logged in", true);
-
-        isProcessing = true;
-        updateUIState();
-
-        try {
-          const res = await fetch(
-            `http://localhost:8080/groups/${encodeURIComponent(
-              currentGroup
-            )}/members/${encodeURIComponent(
-              memberUsername
-            )}?requester=${encodeURIComponent(username)}`,
-            {
-              method: "DELETE",
+            if (!res.ok) {
+              const errorData = await res.json();
+              throw new Error(
+                errorData.error || `Failed to add member (${res.status})`
+              );
             }
-          );
-          if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(
-              errorData.error || `Failed to kick member (${res.status})`
-            );
+            elements.addMemberUsername.value = "";
+            await updateGroupMembers();
+            showToast(`Added ${sanitizeInput(memberUsername)} to group`);
+          } catch (err) {
+            showToast(`Error adding member: ${err.message}`, true);
+          } finally {
+            state.isProcessing = false;
+            updateUIState();
           }
-          await updateGroupMembers();
-          showToast(`Kicked ${sanitizeInput(memberUsername)} from group`);
-        } catch (err) {
-          showToast(`Error kicking member: ${err.message}`, true);
-        } finally {
-          isProcessing = false;
-          updateUIState();
         }
-      }
 
-      async function addAdmin(memberUsername) {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        if (!currentGroup || !username)
-          return showToast("Select a group and ensure logged in", true);
+        async function kickMember(memberUsername) {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          if (!state.currentGroup || !state.username) {
+            return showToast("Select a group and ensure logged in", true);
+          }
 
-        isProcessing = true;
-        updateUIState();
+          state.isProcessing = true;
+          updateUIState();
 
-        try {
-          const res = await fetch(
-            `http://localhost:8080/groups/${encodeURIComponent(
-              currentGroup
-            )}/admins/${encodeURIComponent(
-              memberUsername
-            )}?requester=${encodeURIComponent(username)}`,
-            {
-              method: "PUT",
+          try {
+            const res = await fetch(
+              `${API_BASE}/groups/${encodeURIComponent(
+                state.currentGroup
+              )}/members/${encodeURIComponent(
+                memberUsername
+              )}?requester=${encodeURIComponent(state.username)}`,
+              {
+                method: "DELETE",
+              }
+            );
+            if (!res.ok) {
+              const errorData = await res.json();
+              throw new Error(
+                errorData.error || `Failed to kick member (${res.status})`
+              );
             }
-          );
-          if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(
-              errorData.error || `Failed to add admin (${res.status})`
-            );
+            await updateGroupMembers();
+            showToast(`Kicked ${sanitizeInput(memberUsername)} from group`);
+          } catch (err) {
+            showToast(`Error kicking member: ${err.message}`, true);
+          } finally {
+            state.isProcessing = false;
+            updateUIState();
           }
-          await updateGroupMembers();
-          showToast(`Made ${sanitizeInput(memberUsername)} an admin`);
-        } catch (err) {
-          showToast(`Error adding admin: ${err.message}`, true);
-        } finally {
-          isProcessing = false;
-          updateUIState();
         }
-      }
 
-      async function removeAdmin(memberUsername) {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        if (!currentGroup || !username)
-          return showToast("Select a group and ensure logged in", true);
+        async function addAdmin(memberUsername) {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          if (!state.currentGroup || !state.username) {
+            return showToast("Select a group and ensure logged in", true);
+          }
 
-        isProcessing = true;
-        updateUIState();
+          state.isProcessing = true;
+          updateUIState();
 
-        try {
-          const res = await fetch(
-            `http://localhost:8080/groups/${encodeURIComponent(
-              currentGroup
-            )}/admins/${encodeURIComponent(
-              memberUsername
-            )}?requester=${encodeURIComponent(username)}`,
-            {
-              method: "DELETE",
+          try {
+            const res = await fetch(
+              `${API_BASE}/groups/${encodeURIComponent(
+                state.currentGroup
+              )}/admins/${encodeURIComponent(
+                memberUsername
+              )}?requester=${encodeURIComponent(state.username)}`,
+              {
+                method: "PUT",
+              }
+            );
+            if (!res.ok) {
+              const errorData = await res.json();
+              throw new Error(
+                errorData.error || `Failed to add admin (${res.status})`
+              );
             }
-          );
-          if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(
-              errorData.error || `Failed to remove admin (${res.status})`
-            );
+            await updateGroupMembers();
+            showToast(`Made ${sanitizeInput(memberUsername)} an admin`);
+          } catch (err) {
+            showToast(`Error adding admin: ${err.message}`, true);
+          } finally {
+            state.isProcessing = false;
+            updateUIState();
           }
-          await updateGroupMembers();
-          showToast(
-            `Removed admin status from ${sanitizeInput(memberUsername)}`
-          );
-        } catch (err) {
-          showToast(`Error removing admin: ${err.message}`, true);
-        } finally {
-          isProcessing = false;
+        }
+
+        async function removeAdmin(memberUsername) {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          if (!state.currentGroup || !state.username) {
+            return showToast("Select a group and ensure logged in", true);
+          }
+
+          state.isProcessing = true;
           updateUIState();
+
+          try {
+            const res = await fetch(
+              `${API_BASE}/groups/${encodeURIComponent(
+                state.currentGroup
+              )}/admins/${encodeURIComponent(
+                memberUsername
+              )}?requester=${encodeURIComponent(state.username)}`,
+              {
+                method: "DELETE",
+              }
+            );
+            if (!res.ok) {
+              const errorData = await res.json();
+              throw new Error(
+                errorData.error || `Failed to remove admin (${res.status})`
+              );
+            }
+            await updateGroupMembers();
+            showToast(
+              `Removed admin status from ${sanitizeInput(memberUsername)}`
+            );
+          } catch (err) {
+            showToast(`Error removing admin: ${err.message}`, true);
+          } finally {
+            state.isProcessing = false;
+            updateUIState();
+          }
         }
-      }
 
-      function appendMessage(content, id, className, timestamp) {
-        if (!content) return;
-        const messages = document.getElementById("messages");
-        const msgDiv = document.createElement("div");
-        msgDiv.className = `p-2 rounded text-sm ${className}`;
-        const contentDiv = document.createElement("div");
-        contentDiv.textContent = content;
-        msgDiv.appendChild(contentDiv);
-        if (timestamp) {
-          const timeDiv = document.createElement("div");
-          timeDiv.className = "message-timestamp";
-          timeDiv.textContent = timestamp;
-          msgDiv.appendChild(timeDiv);
+        function showTyping(sender, isTyping) {
+          if (
+            !sender ||
+            sender === state.username ||
+            !state.targetId ||
+            sender !== state.targetId ||
+            elements.isGroup.checked
+          ) {
+            return;
+          }
+          elements.typingStatus.textContent = isTyping
+            ? `${sanitizeInput(sender)} is typing...`
+            : "";
         }
-        if (id) msgDiv.dataset.id = id;
-        messages.appendChild(msgDiv);
-        messages.scrollTop = messages.scrollHeight;
-      }
 
-      function appendStatusMessage(content, className) {
-        if (!content) return;
-        const statusLog = document.getElementById("status-log");
-        const statusDiv = document.createElement("div");
-        statusDiv.className = `text-sm ${className}`;
-        statusDiv.textContent = content;
-        statusLog.appendChild(statusDiv);
-        statusLog.scrollTop = statusLog.scrollHeight;
-      }
+        const debouncedSendTyping = debounce(() => {
+          if (
+            !state.isConnected ||
+            !state.socket ||
+            state.socket.readyState !== WebSocket.OPEN ||
+            !state.targetId ||
+            elements.isGroup.checked
+          ) {
+            return;
+          }
 
-      function showTyping(sender, isTyping) {
-        if (
-          !sender ||
-          sender === username ||
-          !targetId ||
-          sender !== targetId ||
-          document.getElementById("isGroup").checked
-        )
-          return;
-        const typingStatus = document.getElementById("typing-status");
-        typingStatus.textContent = isTyping
-          ? `${sanitizeInput(sender)} is typing...`
-          : "";
-      }
-
-      const debouncedSendTyping = debounce(() => {
-        if (
-          !isConnected ||
-          !socket ||
-          socket.readyState !== WebSocket.OPEN ||
-          !targetId ||
-          document.getElementById("isGroup").checked
-        )
-          return;
-
-        socket.send(
-          JSON.stringify({
-            type: "typing",
-            sender: username,
-            receiver: targetId,
-            status: "start",
-          })
-        );
-        isTypingSent = true;
-
-        if (typingTimeout) clearTimeout(typingTimeout);
-        typingTimeout = setTimeout(() => {
-          socket.send(
+          state.socket.send(
             JSON.stringify({
               type: "typing",
-              sender: username,
-              receiver: targetId,
-              status: "stop",
+              sender: state.username,
+              receiver: state.targetId,
+              status: "start",
             })
           );
-          isTypingSent = false;
-        }, 2000);
-      }, 500);
+          state.isTypingSent = true;
 
-      function sendTyping() {
-        const messageInput = document
-          .getElementById("messageInput")
-          .value.trim();
-        if (
-          !isConnected ||
-          !socket ||
-          socket.readyState !== WebSocket.OPEN ||
-          !messageInput
-        )
-          return;
-        debouncedSendTyping();
-      }
+          if (state.typingTimeout) clearTimeout(state.typingTimeout);
+          state.typingTimeout = setTimeout(() => {
+            state.socket.send(
+              JSON.stringify({
+                type: "typing",
+                sender: state.username,
+                receiver: state.targetId,
+                status: "stop",
+              })
+            );
+            state.isTypingSent = false;
+          }, 2000);
+        }, 500);
 
-      function sendMessage() {
-        if (isProcessing)
-          return showToast("Another action is in progress", true);
-        const messageInput = document.getElementById("messageInput");
-        const content = messageInput.value.trim();
-        const validationError = validateMessage(content);
-        if (validationError) return showToast(validationError, true);
-        if (!targetId || !isConnected)
-          return showToast("Select a chat and ensure logged in", true);
-
-        isProcessing = true;
-        updateUIState();
-
-        const isGroup = document.getElementById("isGroup").checked;
-        const message = {
-          type: "message",
-          sender: username,
-          content: content,
-          receiver: isGroup ? undefined : targetId,
-          group_id: isGroup ? targetId : undefined,
-        };
-
-        if (socket && socket.readyState === WebSocket.OPEN) {
-          try {
-            socket.send(JSON.stringify(message));
-            messageInput.value = "";
-            if (typingTimeout) {
-              clearTimeout(typingTimeout);
-              socket.send(
-                JSON.stringify({
-                  type: "typing",
-                  sender: username,
-                  receiver: isGroup ? undefined : targetId,
-                  group_id: isGroup ? targetId : undefined,
-                  status: "stop",
-                })
-              );
-              isTypingSent = false;
-            }
-          } catch (err) {
-            showToast("Failed to send message: WebSocket error", true);
+        function sendTyping() {
+          const messageInput = elements.messageInput.value.trim();
+          if (
+            !state.isConnected ||
+            !state.socket ||
+            state.socket.readyState !== WebSocket.OPEN ||
+            !messageInput
+          ) {
+            return;
           }
-        } else {
-          showToast("Not connected to WebSocket", true);
+          debouncedSendTyping();
         }
 
-        isProcessing = false;
-        updateUIState();
-      }
-
-      document
-        .getElementById("messageInput")
-        .addEventListener("keypress", (e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
+        async function sendMessage() {
+          if (state.isProcessing)
+            return showToast("Another action is in progress", true);
+          const content = elements.messageInput.value.trim();
+          if (!content) {
+            showError("messageInput", "Message cannot be empty");
+            return;
           }
-        });
+          if (content.length > 1000) {
+            showError("messageInput", "Message too long (max 1000 characters)");
+            return;
+          }
+          if (!state.targetId || !state.isConnected) {
+            showToast("Select a chat and ensure logged in", true);
+            return;
+          }
 
-      // Initialize UI
-      updateUIState();
+          state.isProcessing = true;
+          updateUIState();
+
+          const isGroup = elements.isGroup.checked;
+          const message = {
+            type: "message",
+            sender: state.username,
+            content: content,
+            receiver: isGroup ? undefined : state.targetId,
+            group_id: isGroup ? state.targetId : undefined,
+          };
+
+          if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+            try {
+              state.socket.send(JSON.stringify(message));
+              elements.messageInput.value = "";
+              clearError("messageInput");
+              if (state.typingTimeout) {
+                clearTimeout(state.typingTimeout);
+                state.socket.send(
+                  JSON.stringify({
+                    type: "typing",
+                    sender: state.username,
+                    receiver: isGroup ? undefined : state.targetId,
+                    group_id: isGroup ? state.targetId : undefined,
+                    status: "stop",
+                  })
+                );
+                state.isTypingSent = false;
+              }
+            } catch (err) {
+              showToast("Failed to send message: WebSocket error", true);
+            }
+          } else {
+            showToast("Not connected to WebSocket", true);
+          }
+
+          state.isProcessing = false;
+          updateUIState();
+        }
+
+        // Event Listeners
+        function initEventListeners() {
+          ["username", "groupName", "targetId", "addMemberUsername"].forEach(
+            (id) => {
+              document.getElementById(id).addEventListener("input", () => {
+                clearError(id);
+                updateUIState();
+              });
+            }
+          );
+
+          elements.messageInput.addEventListener("input", () => {
+            clearError("messageInput");
+            sendTyping();
+            updateUIState();
+          });
+
+          elements.isGroup.addEventListener("change", () => {
+            updateUIState();
+            const isGroupChecked = elements.isGroup.checked;
+            elements.groupManagement.classList.toggle(
+              "hidden",
+              !isGroupChecked
+            );
+            if (!isGroupChecked) {
+              state.currentGroup = null;
+              elements.groupMembers.innerHTML = "";
+              elements.addMemberUsername.value = "";
+            } else {
+              const groupId = elements.targetId.value.trim();
+              if (groupId && validateInput(groupId, ID_REGEX, "targetId", "")) {
+                joinGroup(groupId);
+              }
+            }
+          });
+
+          elements.messageInput.addEventListener("keypress", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              sendMessage();
+            }
+          });
+        }
+
+        // Initialize
+        initEventListeners();
+        updateUIState();
+
+        // Public API
+        return {
+          registerUser,
+          loginUser,
+          logoutUser,
+          createGroup,
+          joinGroup,
+          startChat,
+          addMember,
+          kickMember,
+          addAdmin,
+          removeAdmin,
+          sendMessage,
+        };
+      })();
     </script>
   </body>
 </html>
