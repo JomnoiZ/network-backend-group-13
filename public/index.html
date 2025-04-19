@@ -122,7 +122,12 @@
       <h1 class="text-2xl sm:text-3xl font-bold mb-6 text-center text-blue-600">
         Go WebSocket Chat
       </h1>
-      <div id="toast-container" class="toast-container" role="alert" aria-live="assertive"></div>
+      <div
+        id="toast-container"
+        class="toast-container"
+        role="alert"
+        aria-live="assertive"
+      ></div>
       <div id="container" class="flex flex-col sm:flex-row gap-6">
         <div id="sidebar" class="w-full sm:w-80 bg-white rounded-lg shadow p-4">
           <h2 class="text-lg font-semibold mb-4">User Setup</h2>
@@ -402,7 +407,11 @@
 
           // Create a new toast element
           const toast = document.createElement("div");
-          toast.className = `toast ${isError ? "border-l-4 border-red-500" : "border-l-4 border-green-500"}`;
+          toast.className = `toast ${
+            isError
+              ? "border-l-4 border-red-500"
+              : "border-l-4 border-green-500"
+          }`;
           toast.textContent = message;
           toast.setAttribute("aria-label", message);
 
@@ -418,7 +427,11 @@
 
           // Fade out and remove after duration
           setTimeout(() => {
-            toast.className = `toast toast-hidden ${isError ? "border-l-4 border-red-500" : "border-l-4 border-green-500"}`;
+            toast.className = `toast toast-hidden ${
+              isError
+                ? "border-l-4 border-red-500"
+                : "border-l-4 border-green-500"
+            }`;
             setTimeout(() => {
               if (toast.parentElement) {
                 toast.remove();
