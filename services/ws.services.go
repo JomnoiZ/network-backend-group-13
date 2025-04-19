@@ -8,6 +8,7 @@ import (
 
 	"github.com/JomnoiZ/network-backend-group-13.git/models"
 	"github.com/JomnoiZ/network-backend-group-13.git/repository/database"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -50,6 +51,11 @@ func (s *websocketService) HandleConnection(userID string, conn *websocket.Conn)
 	}
 
 	s.mutex.Lock()
+	if oldClient, exists := s.clients[userID]; exists {
+		// Close existing connection for the user
+		close(oldClient.Send)
+		oldClient.Conn.Close()
+	}
 	s.clients[userID] = client
 	s.mutex.Unlock()
 
@@ -62,7 +68,11 @@ func (s *websocketService) HandleConnection(userID string, conn *websocket.Conn)
 func (s *websocketService) GetClients() map[string]*models.Client {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	return s.clients
+	clients := make(map[string]*models.Client)
+	for k, v := range s.clients {
+		clients[k] = v
+	}
+	return clients
 }
 
 func (s *websocketService) AddToGroup(client *models.Client, groupID string) {
@@ -103,8 +113,8 @@ func (s *websocketService) NotifyGroupUpdate(groupID string, updateType string, 
 			"type": updateType,
 			"data": data,
 		},
-	}	
-	
+	}
+
 	messageJSON, err := json.Marshal(message)
 	if err != nil {
 		log.Println("Failed to marshal group update:", err)
@@ -116,15 +126,7 @@ func (s *websocketService) NotifyGroupUpdate(groupID string, updateType string, 
 
 	if groupClients, exists := s.groups[groupID]; exists {
 		for _, client := range groupClients {
-			select {
-			case client.Send <- messageJSON:
-			default:
-				close(client.Send)
-				delete(s.clients, client.ID)
-				for gid := range s.groups {
-					delete(s.groups[gid], client.ID)
-				}
-			}
+			s.sendMessage(client, messageJSON)
 		}
 	}
 }
@@ -147,15 +149,7 @@ func (s *websocketService) broadcastStatus(userID string, status string) {
 
 	for _, client := range s.clients {
 		if client.ID != userID {
-			select {
-			case client.Send <- messageJSON:
-			default:
-				close(client.Send)
-				delete(s.clients, client.ID)
-				for groupID := range s.groups {
-					delete(s.groups[groupID], client.ID)
-				}
-			}
+			s.sendMessage(client, messageJSON)
 		}
 	}
 }
@@ -163,11 +157,9 @@ func (s *websocketService) broadcastStatus(userID string, status string) {
 func (s *websocketService) readPump(client *models.Client) {
 	defer func() {
 		s.mutex.Lock()
-		if _, ok := s.clients[client.ID]; ok {
-			delete(s.clients, client.ID)
-			for groupID := range s.groups {
-				delete(s.groups[groupID], client.ID)
-			}
+		delete(s.clients, client.ID)
+		for groupID := range s.groups {
+			delete(s.groups[groupID], client.ID)
 		}
 		s.mutex.Unlock()
 		client.Conn.Close()
@@ -222,23 +214,18 @@ func (s *websocketService) writePump(client *models.Client) {
 	for {
 		select {
 		case message, ok := <-client.Send:
-			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
+				client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 				client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
+			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			w, err := client.Conn.NextWriter(websocket.TextMessage)
 			if err != nil {
 				return
 			}
 			w.Write(message)
-
-			n := len(client.Send)
-			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-client.Send)
-			}
 
 			if err := w.Close(); err != nil {
 				return
@@ -252,13 +239,33 @@ func (s *websocketService) writePump(client *models.Client) {
 	}
 }
 
+func (s *websocketService) sendMessage(client *models.Client, message []byte) {
+	select {
+	case client.Send <- message:
+	case <-time.After(time.Second):
+		log.Printf("Failed to send to client %s, closing connection", client.ID)
+		close(client.Send)
+		s.mutex.Lock()
+		delete(s.clients, client.ID)
+		for gid := range s.groups {
+			delete(s.groups[gid], client.ID)
+		}
+		s.mutex.Unlock()
+	}
+}
+
 func (s *websocketService) handleChatMessage(msg *models.Message) {
+	if msg.ID == "" {
+		msg.ID = uuid.New().String()
+	}
+
 	messageJSON, err := json.Marshal(msg)
 	if err != nil {
 		log.Println("Failed to marshal message:", err)
 		return
 	}
 
+	// Save message to database
 	if msg.GroupID != "" || msg.ReceiverID != "" {
 		dbMsg := &models.MessageDB{
 			ID:         msg.ID,
@@ -266,55 +273,34 @@ func (s *websocketService) handleChatMessage(msg *models.Message) {
 			ReceiverID: msg.ReceiverID,
 			GroupID:    msg.GroupID,
 			Content:    msg.Content,
+			Timestamp:  time.Now(),
 		}
 		if err := s.messageRepo.SaveMessage(dbMsg); err != nil {
 			log.Println("Failed to save message to database:", err)
+			return
 		}
 	}
 
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
+	// Broadcast to group
 	if msg.GroupID != "" {
 		if groupClients, exists := s.groups[msg.GroupID]; exists {
 			for _, client := range groupClients {
-				select {
-				case client.Send <- messageJSON:
-				default:
-					close(client.Send)
-					delete(s.clients, client.ID)
-					for gid := range s.groups {
-						delete(s.groups[gid], client.ID)
-					}
-				}
+				s.sendMessage(client, messageJSON)
 			}
 		}
 		return
 	}
 
+	// Send to receiver and sender (for direct messages)
 	if msg.ReceiverID != "" {
-		if client, exists := s.clients[msg.ReceiverID]; exists {
-			select {
-			case client.Send <- messageJSON:
-			default:
-				close(client.Send)
-				delete(s.clients, client.ID)
-				for gid := range s.groups {
-					delete(s.groups[gid], client.ID)
-				}
-			}
+		if receiver, exists := s.clients[msg.ReceiverID]; exists && receiver.ID != msg.SenderID {
+			s.sendMessage(receiver, messageJSON)
 		}
-
-		if sender, exists := s.clients[msg.SenderID]; exists && sender.ID != msg.ReceiverID {
-			select {
-			case sender.Send <- messageJSON:
-			default:
-				close(sender.Send)
-				delete(s.clients, sender.ID)
-				for gid := range s.groups {
-					delete(s.groups[gid], sender.ID)
-				}
-			}
+		if sender, exists := s.clients[msg.SenderID]; exists {
+			s.sendMessage(sender, messageJSON)
 		}
 	}
 }
@@ -329,36 +315,22 @@ func (s *websocketService) handleTypingStatus(msg *models.Message) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
+	// Broadcast to group
 	if msg.GroupID != "" {
 		if groupClients, exists := s.groups[msg.GroupID]; exists {
 			for _, client := range groupClients {
 				if client.ID != msg.SenderID {
-					select {
-					case client.Send <- messageJSON:
-					default:
-						close(client.Send)
-						delete(s.clients, client.ID)
-						for gid := range s.groups {
-							delete(s.groups[gid], client.ID)
-						}
-					}
+					s.sendMessage(client, messageJSON)
 				}
 			}
 		}
 		return
 	}
 
+	// Send to receiver
 	if msg.ReceiverID != "" && msg.ReceiverID != msg.SenderID {
 		if client, exists := s.clients[msg.ReceiverID]; exists {
-			select {
-			case client.Send <- messageJSON:
-			default:
-				close(client.Send)
-				delete(s.clients, client.ID)
-				for gid := range s.groups {
-					delete(s.groups[gid], client.ID)
-				}
-			}
+			s.sendMessage(client, messageJSON)
 		}
 	}
 }
