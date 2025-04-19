@@ -7,11 +7,15 @@ import (
 )
 
 func UserRoute(r *gin.Engine, userService services.UserService) {
-	userController := controllers.NewUserController(userService)
+    userController := controllers.NewUserController(userService)
 
-	rgu := r.Group("/users")
-	{
-		rgu.GET("/:id", userController.GetUser)
-		rgu.POST("/:id", userController.CreateUser)
-	}
+    rgu := r.Group("/users")
+    {
+        rgu.GET("/:username", userController.GetUser)
+        rgu.GET("/", userController.GetAllUsers)
+        rgu.POST("/", userController.CreateUser)
+        rgu.GET("/online", userController.ListOnlineUsers)
+        rgu.GET("/:username/groups", userController.ListUserGroups)
+        rgu.GET("/:username/messages/:receiver", userController.GetDirectMessages)
+    }
 }

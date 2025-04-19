@@ -5,39 +5,43 @@ import (
 	"net/http"
 
 	"github.com/JomnoiZ/network-backend-group-13.git/services"
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
 type websocketController struct {
-	websocketService services.WebsocketService
+    websocketService services.WebsocketService
 }
 
 type WebsocketController interface {
-	HandleWebSocket(w http.ResponseWriter, r *http.Request)
+    HandleWebSocket(c *gin.Context)
 }
 
 func NewWebsocketController(websocketService services.WebsocketService) WebsocketController {
-	return &websocketController{
-		websocketService: websocketService,
-	}
+    return &websocketController{
+        websocketService: websocketService,
+    }
 }
 
-func (c *websocketController) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("id")
-	if userID == "" {
-		http.Error(w, "Missing user ID", http.StatusBadRequest)
-		return
-	}
+func (c *websocketController) HandleWebSocket(ctx *gin.Context) {
+    username := ctx.Query("username")
+    if username == "" {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "Missing username"})
+        return
+    }
 
-	var upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
+    var upgrader = websocket.Upgrader{
+        ReadBufferSize:  1024,
+        WriteBufferSize: 1024,
+        CheckOrigin: func(r *http.Request) bool { return true },
+    }
 
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Upgrade error:", err)
-		return
-	}
+    conn, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
+    if err != nil {
+        log.Printf("WebSocket upgrade error for user %s: %v", username, err)
+        ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to establish WebSocket connection"})
+        return
+    }
 
-	c.websocketService.HandleConnection(userID, conn)
+    c.websocketService.HandleConnection(username, conn)
 }

@@ -4,40 +4,45 @@ import (
 	"context"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"github.com/JomnoiZ/network-backend-group-13.git/models"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
-type groupRepository struct {
-	firestoreClient *firestore.Client
+type mongoGroupRepository struct {
+    collection *mongo.Collection
 }
 
-type GroupRepository interface {
-	GetGroup(groupID string) (*models.Group, error)
-	CreateGroup(group *models.Group) (*models.Group, error)
+func NewMongoGroupRepository(client *mongo.Client) GroupRepository {
+    collection := client.Database("chat").Collection("groups")
+    return &mongoGroupRepository{collection: collection}
 }
 
-func NewGroupRepository(firestoreClient *firestore.Client) GroupRepository {
-	return &groupRepository{
-		firestoreClient: firestoreClient,
-	}
+func (r *mongoGroupRepository) GetGroup(groupID string) (*models.Group, error) {
+    ctx := context.Background()
+    var group models.Group
+    err := r.collection.FindOne(ctx, bson.M{"id": groupID}).Decode(&group)
+    if err == mongo.ErrNoDocuments {
+        return nil, nil
+    }
+    if err != nil {
+        return nil, err
+    }
+    return &group, nil
 }
 
-func (r *groupRepository) GetGroup(groupID string) (*models.Group, error) {
-	doc, err := r.firestoreClient.Collection("groups").Doc(groupID).Get(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	var group models.Group
-	doc.DataTo(&group)
-	return &group, nil
+func (r *mongoGroupRepository) CreateGroup(group *models.Group) (*models.Group, error) {
+    ctx := context.Background()
+    group.CreatedAt = time.Now()
+    _, err := r.collection.InsertOne(ctx, group)
+    if err != nil {
+        return nil, err
+    }
+    return group, nil
 }
 
-func (r *groupRepository) CreateGroup(group *models.Group) (*models.Group, error) {
-	group.CreatedAt = time.Now()
-	_, err := r.firestoreClient.Collection("groups").Doc(group.ID).Set(context.Background(), group)
-	if err != nil {
-		return nil, err
-	}
-	return group, nil
+func (r *mongoGroupRepository) UpdateGroup(group *models.Group) error {
+    ctx := context.Background()
+    _, err := r.collection.ReplaceOne(ctx, bson.M{"id": group.ID}, group)
+    return err
 }

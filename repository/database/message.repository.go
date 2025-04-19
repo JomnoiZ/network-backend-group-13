@@ -2,56 +2,75 @@ package database
 
 import (
 	"context"
-	"log"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"github.com/JomnoiZ/network-backend-group-13.git/models"
-	"google.golang.org/api/iterator"
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-type messageRepository struct {
-	firestoreClient *firestore.Client
+type mongoMessageRepository struct {
+    collection *mongo.Collection
 }
 
-type MessageRepository interface {
-	SaveMessage(msg *models.MessageDB)
-	GetMessagesForUser(userID string) ([]models.MessageDB, error)
+func NewMongoMessageRepository(client *mongo.Client) MessageRepository {
+    collection := client.Database("chat").Collection("messages")
+    return &mongoMessageRepository{collection: collection}
 }
 
-func NewMessageRepository(firestoreClient *firestore.Client) MessageRepository {
-	return &messageRepository{
-		firestoreClient: firestoreClient,
-	}
+func (r *mongoMessageRepository) SaveMessage(message *models.MessageDB) error {
+    ctx := context.Background()
+    if message.ID == "" {
+        message.ID = uuid.New().String()
+    }
+    message.Timestamp = time.Now()
+    _, err := r.collection.InsertOne(ctx, message)
+    return err
 }
 
-func (r *messageRepository) SaveMessage(msg *models.MessageDB) {
-	msg.Timestamp = time.Now()
-	_, _, err := r.firestoreClient.Collection("messages").Add(context.Background(), msg)
-	if err != nil {
-		log.Printf("❌ Failed to save message: %v", err)
-	}
+func (r *mongoMessageRepository) GetGroupMessages(groupID string) ([]*models.MessageDB, error) {
+    ctx := context.Background()
+    cursor, err := r.collection.Find(ctx, bson.M{"group_id": groupID}, options.Find().SetSort(bson.M{"timestamp": 1}))
+    if err != nil {
+        return nil, err
+    }
+    defer cursor.Close(ctx)
+
+    var messages []*models.MessageDB
+    for cursor.Next(ctx) {
+        var msg models.MessageDB
+        if err := cursor.Decode(&msg); err != nil {
+            return nil, err
+        }
+        messages = append(messages, &msg)
+    }
+    return messages, nil
 }
 
-func (r *messageRepository) GetMessagesForUser(userID string) ([]models.MessageDB, error) {
-	var messages []models.MessageDB
+func (r *mongoMessageRepository) GetDirectMessages(sender, receiver string) ([]*models.MessageDB, error) {
+    ctx := context.Background()
+    filter := bson.M{
+        "group_id": "",
+        "$or": []bson.M{
+            {"sender": sender, "receiver": receiver},
+            {"sender": receiver, "receiver": sender},
+        },
+    }
+    cursor, err := r.collection.Find(ctx, filter, options.Find().SetSort(bson.M{"timestamp": 1}))
+    if err != nil {
+        return nil, err
+    }
+    defer cursor.Close(ctx)
 
-	iter := r.firestoreClient.Collection("messages").
-		Where("receiver_id", "==", userID).
-		OrderBy("timestamp", firestore.Asc).
-		Documents(context.Background())
-
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		var m models.MessageDB
-		doc.DataTo(&m)
-		messages = append(messages, m)
-	}
-	return messages, nil
+    var messages []*models.MessageDB
+    for cursor.Next(ctx) {
+        var msg models.MessageDB
+        if err := cursor.Decode(&msg); err != nil {
+            return nil, err
+        }
+        messages = append(messages, &msg)
+    }
+    return messages, nil
 }
