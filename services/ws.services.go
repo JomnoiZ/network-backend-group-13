@@ -17,7 +17,7 @@ const (
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 10000
-	sendTimeout    = 3 * time.Second 
+	sendTimeout    = 3 * time.Second
 )
 
 type WebsocketService interface {
@@ -44,6 +44,15 @@ func NewWebsocketService(messageRepo database.MessageRepository) WebsocketServic
 }
 
 func (s *websocketService) HandleConnection(username string, conn *websocket.Conn) {
+	// Validate inputs
+	if username == "" || conn == nil {
+		log.Printf("Invalid HandleConnection parameters: username=%s, conn=%v", username, conn)
+		if conn != nil {
+			conn.Close()
+		}
+		return
+	}
+
 	client := &models.Client{
 		Username: username,
 		Conn:     conn,
@@ -53,13 +62,12 @@ func (s *websocketService) HandleConnection(username string, conn *websocket.Con
 
 	s.mutex.Lock()
 	if oldClient, exists := s.clients[username]; exists {
-		// Signal old client to close
-		select {
-		case oldClient.Send <- []byte{}: // Send empty message to unblock writePump
-		default:
+		// Signal old client to close by sending a close message
+		if oldClient.Conn != nil {
+			oldClient.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			oldClient.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		}
-		close(oldClient.Send)
-		oldClient.Conn.Close()
+		// Do not close oldClient.Send here; let writePump handle it
 	}
 	s.clients[username] = client
 	s.mutex.Unlock()
@@ -81,6 +89,11 @@ func (s *websocketService) GetClients() map[string]*models.Client {
 }
 
 func (s *websocketService) AddToGroup(client *models.Client, groupID string) {
+	if client == nil || client.Username == "" {
+		log.Printf("Cannot add nil or invalid client to group %s", groupID)
+		return
+	}
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -91,6 +104,9 @@ func (s *websocketService) AddToGroup(client *models.Client, groupID string) {
 		}
 		s.groups[groupID][client.Username] = actualClient
 		actualClient.Groups[groupID] = true
+		log.Printf("Added user %s to group %s", client.Username, groupID)
+	} else {
+		log.Printf("Client %s not found in clients map for group %s", client.Username, groupID)
 	}
 }
 
@@ -100,6 +116,9 @@ func (s *websocketService) KickFromGroup(username string, groupID string) {
 
 	if groupClients, exists := s.groups[groupID]; exists {
 		delete(groupClients, username)
+		if len(groupClients) == 0 {
+			delete(s.groups, groupID) // Clean up empty groups
+		}
 	}
 
 	if client, exists := s.clients[username]; exists {
@@ -115,6 +134,8 @@ func (s *websocketService) KickFromGroup(username string, groupID string) {
 		}
 		if messageJSON, err := json.Marshal(message); err == nil {
 			s.sendMessage(client, messageJSON)
+		} else {
+			log.Printf("Failed to marshal kick message for %s: %v", username, err)
 		}
 	}
 }
@@ -131,7 +152,7 @@ func (s *websocketService) NotifyGroupUpdate(groupID string, updateType string, 
 
 	messageJSON, err := json.Marshal(message)
 	if err != nil {
-		log.Println("Failed to marshal group update:", err)
+		log.Printf("Failed to marshal group update for group %s: %v", groupID, err)
 		return
 	}
 
@@ -155,7 +176,7 @@ func (s *websocketService) broadcastStatus(username string, status string) {
 
 	messageJSON, err := json.Marshal(message)
 	if err != nil {
-		log.Println("Failed to marshal status message:", err)
+		log.Printf("Failed to marshal status message for %s: %v", username, err)
 		return
 	}
 
@@ -170,18 +191,40 @@ func (s *websocketService) broadcastStatus(username string, status string) {
 }
 
 func (s *websocketService) readPump(client *models.Client) {
+	// Validate client
+	if client == nil || client.Conn == nil || client.Username == "" || client.Send == nil || client.Groups == nil {
+		log.Printf("Invalid client state in readPump: %+v", client)
+		return
+	}
+
 	defer func() {
+		// Recover from any panic to prevent server crash
+		if r := recover(); r != nil {
+			log.Printf("Recovered panic in readPump for user %s: %v", client.Username, r)
+		}
+
 		s.mutex.Lock()
-		delete(s.clients, client.Username)
-		for groupID := range client.Groups {
-			if groupClients, exists := s.groups[groupID]; exists {
-				delete(groupClients, client.Username)
+		// Only delete if client is still in s.clients
+		if actualClient, exists := s.clients[client.Username]; exists && actualClient == client {
+			delete(s.clients, client.Username)
+			for groupID := range client.Groups {
+				if groupClients, exists := s.groups[groupID]; exists {
+					delete(groupClients, client.Username)
+					if len(groupClients) == 0 {
+						delete(s.groups, groupID)
+					}
+				}
 			}
 		}
 		s.mutex.Unlock()
-		close(client.Send)
-		client.Conn.Close()
-		s.broadcastStatus(client.Username, "offline")
+
+		// Do not close client.Send here; let writePump handle it
+		if client.Conn != nil {
+			client.Conn.Close()
+		}
+		if client.Username != "" {
+			s.broadcastStatus(client.Username, "offline")
+		}
 	}()
 
 	client.Conn.SetReadLimit(maxMessageSize)
@@ -202,7 +245,7 @@ func (s *websocketService) readPump(client *models.Client) {
 
 		var msg models.Message
 		if err := json.Unmarshal(message, &msg); err != nil {
-			log.Println("Failed to unmarshal message:", err)
+			log.Printf("Failed to unmarshal message for user %s: %v", client.Username, err)
 			continue
 		}
 
@@ -223,10 +266,22 @@ func (s *websocketService) readPump(client *models.Client) {
 }
 
 func (s *websocketService) writePump(client *models.Client) {
+	// Validate client
+	if client == nil || client.Conn == nil || client.Username == "" || client.Send == nil {
+		log.Printf("Invalid client state in writePump: %+v", client)
+		return
+	}
+
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		client.Conn.Close()
+		if client.Conn != nil {
+			client.Conn.Close()
+		}
+		// Close Send channel only in writePump
+		if client.Send != nil {
+			close(client.Send)
+		}
 	}()
 
 	for {
@@ -234,11 +289,11 @@ func (s *websocketService) writePump(client *models.Client) {
 		case message, ok := <-client.Send:
 			if !ok {
 				client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
-				client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				client.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 				return
 			}
 
-			// Skip empty messages (used for signaling closure)
+			// Skip empty messages (used for signaling)
 			if len(message) == 0 {
 				continue
 			}
@@ -259,33 +314,25 @@ func (s *websocketService) writePump(client *models.Client) {
 }
 
 func (s *websocketService) sendMessage(client *models.Client, message []byte) {
-	if client == nil || client.Send == nil {
-		log.Printf("Cannot send message: nil client or send channel")
+	if client == nil || client.Send == nil || client.Conn == nil {
+		log.Printf("Cannot send message: nil client or invalid state")
 		return
 	}
 
 	s.mutex.RLock()
-	_, exists := s.clients[client.Username]
+	actualClient, exists := s.clients[client.Username]
 	s.mutex.RUnlock()
 
-	if !exists {
-		log.Printf("Cannot send message: client %s not found", client.Username)
+	if !exists || actualClient != client {
+		log.Printf("Cannot send message: client %s not found or replaced", client.Username)
 		return
 	}
 
 	select {
 	case client.Send <- message:
 	case <-time.After(sendTimeout):
-		log.Printf("Timeout sending to client %s, marking for cleanup", client.Username)
-		// Do not close Send here; let readPump/writePump handle cleanup
-		s.mutex.Lock()
-		delete(s.clients, client.Username)
-		for groupID := range client.Groups {
-			if groupClients, exists := s.groups[groupID]; exists {
-				delete(groupClients, client.Username)
-			}
-		}
-		s.mutex.Unlock()
+		log.Printf("Timeout sending to client %s", client.Username)
+		// Do not perform cleanup here; let readPump/writePump handle it
 	}
 }
 
@@ -302,7 +349,7 @@ func (s *websocketService) handleChatMessage(client *models.Client, msg *models.
 
 	messageJSON, err := json.Marshal(msg)
 	if err != nil {
-		log.Println("Failed to marshal message:", err)
+		log.Printf("Failed to marshal message from %s: %v", client.Username, err)
 		return
 	}
 
@@ -317,7 +364,7 @@ func (s *websocketService) handleChatMessage(client *models.Client, msg *models.
 			Timestamp: time.Now(),
 		}
 		if err := s.messageRepo.SaveMessage(dbMsg); err != nil {
-			log.Println("Failed to save message to database:", err)
+			log.Printf("Failed to save message to database: %v", err)
 			// Continue to send message even if DB save fails
 		}
 	}
@@ -355,7 +402,7 @@ func (s *websocketService) handleTypingStatus(client *models.Client, msg *models
 
 	messageJSON, err := json.Marshal(msg)
 	if err != nil {
-		log.Println("Failed to marshal typing status:", err)
+		log.Printf("Failed to marshal typing status for %s: %v", client.Username, err)
 		return
 	}
 
