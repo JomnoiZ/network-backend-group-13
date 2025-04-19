@@ -61,16 +61,62 @@ func (s *websocketService) HandleConnection(username string, conn *websocket.Con
 	}
 
 	s.mutex.Lock()
-	if oldClient, exists := s.clients[username]; exists {
-		// Signal old client to close by sending a close message
-		if oldClient.Conn != nil {
-			oldClient.Conn.SetWriteDeadline(time.Now().Add(writeWait))
-			oldClient.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	if oldClient, exists := s.clients[username]; exists && oldClient.Conn != nil {
+		log.Printf("Replacing existing session for user %s", username)
+		// Prepare session_replaced message
+		message := models.Message{
+			Type:    "session_replaced",
+			Sender:  username,
+			Content: "Your session was replaced by a new login",
 		}
+		messageJSON, err := json.Marshal(message)
+		if err != nil {
+			log.Printf("Failed to marshal session_replaced message for %s: %v", username, err)
+		} else {
+			// Send message to old client with a timeout
+			select {
+			case oldClient.Send <- messageJSON:
+				log.Printf("Sent session_replaced message to old client %s", username)
+			case <-time.After(sendTimeout):
+				log.Printf("Timeout sending session_replaced message to old client %s", username)
+			}
+		}
+
+		// Send close message to old client
+		if err := oldClient.Conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+			log.Printf("Failed to set write deadline for old client %s: %v", username, err)
+		}
+		if err := oldClient.Conn.WriteMessage(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Session replaced"),
+		); err != nil {
+			log.Printf("Failed to send close message to old client %s: %v", username, err)
+		}
+
+		// Close old connection (but not the Send channel yet)
+		if err := oldClient.Conn.Close(); err != nil {
+			log.Printf("Error closing old connection for %s: %v", username, err)
+		}
+
+		// Remove old client from groups
+		for groupID := range oldClient.Groups {
+			if groupClients, exists := s.groups[groupID]; exists {
+				delete(groupClients, username)
+				if len(groupClients) == 0 {
+					delete(s.groups, groupID)
+					log.Printf("Removed empty group %s", groupID)
+				}
+			}
+		}
+
+		// Mark old client as replaced to prevent further operations
+		delete(s.clients, username)
 	}
+	// Register new client
 	s.clients[username] = client
 	s.mutex.Unlock()
 
+	// Start read and write pumps
 	go s.writePump(client)
 	go s.readPump(client)
 
@@ -95,7 +141,6 @@ func (s *websocketService) AddToGroup(client *models.Client, groupID string) {
 	}
 
 	s.mutex.Lock()
-	// Only add if client exists in s.clients
 	if actualClient, exists := s.clients[client.Username]; exists {
 		if s.groups[groupID] == nil {
 			s.groups[groupID] = make(map[string]*models.Client)
@@ -105,12 +150,9 @@ func (s *websocketService) AddToGroup(client *models.Client, groupID string) {
 		log.Printf("Added user %s to group %s", client.Username, groupID)
 	} else {
 		log.Printf("Client %s not found in clients map for group %s", client.Username, groupID)
-		s.mutex.Unlock()
-		return
 	}
 	s.mutex.Unlock()
 
-	// Notify all group members of the new member
 	s.NotifyGroupUpdate(groupID, "add", map[string]string{"username": client.Username})
 }
 
@@ -119,7 +161,8 @@ func (s *websocketService) KickFromGroup(username string, groupID string) {
 	if groupClients, exists := s.groups[groupID]; exists {
 		delete(groupClients, username)
 		if len(groupClients) == 0 {
-			delete(s.groups, groupID) // Clean up empty groups
+			delete(s.groups, groupID)
+			log.Printf("Removed empty group %s", groupID)
 		}
 	}
 
@@ -130,10 +173,8 @@ func (s *websocketService) KickFromGroup(username string, groupID string) {
 	}
 	s.mutex.Unlock()
 
-	// Notify all group members of the kick
 	s.NotifyGroupUpdate(groupID, "kick", map[string]string{"username": username})
 
-	// Notify the kicked client
 	if kickedClient != nil {
 		message := models.Message{
 			Type:    "group_update",
@@ -206,20 +247,17 @@ func (s *websocketService) broadcastStatus(username string, status string) {
 }
 
 func (s *websocketService) readPump(client *models.Client) {
-	// Validate client
 	if client == nil || client.Conn == nil || client.Username == "" || client.Send == nil || client.Groups == nil {
 		log.Printf("Invalid client state in readPump: %+v", client)
 		return
 	}
 
 	defer func() {
-		// Recover from any panic to prevent server crash
 		if r := recover(); r != nil {
 			log.Printf("Recovered panic in readPump for user %s: %v", client.Username, r)
 		}
 
 		s.mutex.Lock()
-		// Only delete if client is still in s.clients
 		if actualClient, exists := s.clients[client.Username]; exists && actualClient == client {
 			delete(s.clients, client.Username)
 			for groupID := range client.Groups {
@@ -227,19 +265,23 @@ func (s *websocketService) readPump(client *models.Client) {
 					delete(groupClients, client.Username)
 					if len(groupClients) == 0 {
 						delete(s.groups, groupID)
+						log.Printf("Removed empty group %s", groupID)
 					}
 				}
 			}
 		}
 		s.mutex.Unlock()
 
-		// Do not close client.Send here; let writePump handle it
 		if client.Conn != nil {
 			client.Conn.Close()
+		}
+		if client.Send != nil {
+			close(client.Send) // Close Send channel here
 		}
 		if client.Username != "" {
 			s.broadcastStatus(client.Username, "offline")
 		}
+		log.Printf("readPump terminated for user %s", client.Username)
 	}()
 
 	client.Conn.SetReadLimit(maxMessageSize)
@@ -281,7 +323,6 @@ func (s *websocketService) readPump(client *models.Client) {
 }
 
 func (s *websocketService) writePump(client *models.Client) {
-	// Validate client
 	if client == nil || client.Conn == nil || client.Username == "" || client.Send == nil {
 		log.Printf("Invalid client state in writePump: %+v", client)
 		return
@@ -293,10 +334,8 @@ func (s *websocketService) writePump(client *models.Client) {
 		if client.Conn != nil {
 			client.Conn.Close()
 		}
-		// Close Send channel only in writePump
-		if client.Send != nil {
-			close(client.Send)
-		}
+		// Do not close Send channel here; let readPump or HandleConnection handle it
+		log.Printf("writePump terminated for user %s", client.Username)
 	}()
 
 	for {
@@ -304,13 +343,26 @@ func (s *websocketService) writePump(client *models.Client) {
 		case message, ok := <-client.Send:
 			if !ok {
 				client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
-				client.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				if err := client.Conn.WriteMessage(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+				); err != nil {
+					log.Printf("Error sending close message for %s: %v", client.Username, err)
+				}
 				return
 			}
 
-			// Skip empty messages (used for signaling)
 			if len(message) == 0 {
 				continue
+			}
+
+			// Check if client is still valid
+			s.mutex.RLock()
+			actualClient, exists := s.clients[client.Username]
+			s.mutex.RUnlock()
+			if !exists || actualClient != client {
+				log.Printf("Client %s is no longer valid, stopping writePump", client.Username)
+				return
 			}
 
 			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
@@ -345,6 +397,7 @@ func (s *websocketService) sendMessage(client *models.Client, message []byte) {
 
 	select {
 	case client.Send <- message:
+		log.Printf("Message sent to client %s", client.Username)
 	case <-time.After(sendTimeout):
 		log.Printf("Timeout sending to client %s", client.Username)
 	}
@@ -355,7 +408,6 @@ func (s *websocketService) handleChatMessage(client *models.Client, msg *models.
 		msg.ID = uuid.New().String()
 	}
 
-	// Validate message
 	if msg.Content == "" || (msg.GroupID == "" && msg.Receiver == "") {
 		log.Printf("Invalid message from %s: empty content or no recipient", client.Username)
 		return
@@ -367,7 +419,6 @@ func (s *websocketService) handleChatMessage(client *models.Client, msg *models.
 		return
 	}
 
-	// Save to database before sending
 	if msg.GroupID != "" || msg.Receiver != "" {
 		dbMsg := &models.MessageDB{
 			ID:        msg.ID,
@@ -379,7 +430,6 @@ func (s *websocketService) handleChatMessage(client *models.Client, msg *models.
 		}
 		if err := s.messageRepo.SaveMessage(dbMsg); err != nil {
 			log.Printf("Failed to save message to database: %v", err)
-			// Continue to send message even if DB save fails
 		}
 	}
 
@@ -399,7 +449,6 @@ func (s *websocketService) handleChatMessage(client *models.Client, msg *models.
 		if receiver, exists := s.clients[msg.Receiver]; exists && receiver.Username != msg.Sender {
 			s.sendMessage(receiver, messageJSON)
 		}
-		// Echo back to sender
 		s.sendMessage(client, messageJSON)
 	}
 }
@@ -422,7 +471,7 @@ func (s *websocketService) handleTypingStatus(client *models.Client, msg *models
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	if client, exists := s.clients[msg.Receiver]; exists {
-		s.sendMessage(client, messageJSON)
+	if receiver, exists := s.clients[msg.Receiver]; exists {
+		s.sendMessage(receiver, messageJSON)
 	}
 }

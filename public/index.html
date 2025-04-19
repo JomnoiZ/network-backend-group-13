@@ -316,7 +316,7 @@
         const ID_REGEX = /^[a-z0-9-]{1,50}$/;
         const MAX_MESSAGES = 1000;
         const TOAST_DURATION = 3000;
-        const TYPING_TIMEOUT = 5000; // Timeout for typing status per user
+        const TYPING_TIMEOUT = 5000;
 
         // State
         let state = {
@@ -335,7 +335,7 @@
           groups: [],
           typingTimeout: null,
           isTypingSent: false,
-          typingUsers: new Map(), // Map to track users and their typing timeouts
+          typingUsers: new Map(),
         };
 
         // DOM Elements
@@ -531,7 +531,7 @@
                 msg = JSON.parse(event.data);
                 if (!msg || !msg.type)
                   throw new Error("Invalid message format");
-                console.log("Received WebSocket message:", msg); // Debug log
+                console.log("Received WebSocket message:", msg);
               } catch (err) {
                 console.error("Malformed WebSocket message:", event.data);
                 return;
@@ -567,7 +567,7 @@
                     `Typing message: sender=${msg.sender}, status=${
                       msg.status
                     }, group_id=${msg.group_id || "none"}`
-                  ); // Debug log
+                  );
                   showTyping(msg.sender, msg.status === "start", msg.group_id);
                   break;
                 case "status":
@@ -605,7 +605,6 @@
                           groupUpdateType
                         )
                       ) {
-                        // Force immediate group member list refresh
                         await updateGroupMembers(true);
                       }
                       if (
@@ -630,6 +629,19 @@
                     await updateGroups();
                   }
                   break;
+                case "session_replaced":
+                  showToast(
+                    sanitizeInput(
+                      msg.content || "Your session was replaced by a new login"
+                    ),
+                    true
+                  );
+                  appendStatusMessage(
+                    "Session replaced by a new login",
+                    "text-red-600"
+                  );
+                  await logoutUser();
+                  break;
                 case "error":
                   showToast(
                     `WebSocket Error: ${sanitizeInput(
@@ -643,14 +655,26 @@
               }
             };
 
-            state.socket.onclose = () => {
+            state.socket.onclose = (event) => {
               state.isConnected = false;
-              appendStatusMessage("Disconnected", "text-red-600");
-              showToast("Disconnected from chat", true);
               elements.groupManagement.classList.add("hidden");
               state.typingUsers.clear();
               elements.typingStatus.textContent = "";
-              attemptReconnect();
+              if (event.code === 1000 && event.reason === "Session replaced") {
+                showToast("Your session was replaced by a new login", true);
+                appendStatusMessage(
+                  "Disconnected: Session replaced",
+                  "text-red-600"
+                );
+                logoutUser();
+              } else {
+                appendStatusMessage(
+                  `Disconnected (Code: ${event.code})`,
+                  "text-red-600"
+                );
+                showToast(`Disconnected from chat (Code: ${event.code})`, true);
+                attemptReconnect();
+              }
               updateUIState();
             };
 
@@ -1093,9 +1117,7 @@
           }
 
           try {
-            // Show loading indicator
             elements.loading.classList.remove("hidden");
-
             const res = await fetch(
               `${API_BASE}/groups/${encodeURIComponent(state.currentGroup)}`
             );
@@ -1389,7 +1411,6 @@
             }
             elements.addMemberUsername.value = "";
             showToast(`Added ${sanitizeInput(username)} to group`);
-            // Group member list will be updated via WebSocket group_update
           } catch (err) {
             showToast(`Failed to add member: ${err.message}`, true);
           } finally {
@@ -1440,7 +1461,6 @@
               );
             }
             showToast(`Kicked ${sanitizeInput(username)} from group`);
-            // Group member list will be updated via WebSocket group_update
           } catch (err) {
             showToast(`Failed to kick member: ${err.message}`, true);
           } finally {
@@ -1495,7 +1515,6 @@
               );
             }
             showToast(`Made ${sanitizeInput(username)} an admin`);
-            // Group member list will be updated via WebSocket group_update
           } catch (err) {
             showToast(`Failed to add admin: ${err.message}`, true);
           } finally {
@@ -1547,7 +1566,6 @@
               );
             }
             showToast(`Removed admin status from ${sanitizeInput(username)}`);
-            // Group member list will be updated via WebSocket group_update
           } catch (err) {
             showToast(`Failed to remove admin: ${err.message}`, true);
           } finally {
@@ -1594,7 +1612,7 @@
             }, currentGroup=${state.currentGroup}, targetId=${
               state.targetId
             }, isGroup=${elements.isGroup.checked}`
-          ); // Debug log
+          );
 
           const isGroupChat =
             elements.isGroup.checked &&
@@ -1609,13 +1627,11 @@
             return;
           }
 
-          // Clear existing timeout if any
           if (state.typingUsers.has(sender)) {
             clearTimeout(state.typingUsers.get(sender).timeout);
           }
 
           if (isTyping) {
-            // Set typing status with a timeout
             const timeout = setTimeout(() => {
               state.typingUsers.set(sender, {
                 active: false,
@@ -1661,7 +1677,7 @@
             } else {
               message.receiver = state.targetId;
             }
-            console.log("Sending typing status:", message); // Debug log
+            console.log("Sending typing status:", message);
             state.socket.send(JSON.stringify(message));
             state.isTypingSent = isTyping;
           } else {
