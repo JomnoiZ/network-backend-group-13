@@ -26,6 +26,7 @@ type WebsocketService interface {
 	AddToGroup(client *models.Client, groupID string)
 	KickFromGroup(username string, groupID string)
 	NotifyGroupUpdate(groupID string, updateType string, data interface{})
+	BroadcastStatus(username string, status string)
 }
 
 type websocketService struct {
@@ -120,7 +121,7 @@ func (s *websocketService) HandleConnection(username string, conn *websocket.Con
 	go s.writePump(client)
 	go s.readPump(client)
 
-	s.broadcastStatus(username, "online")
+	s.BroadcastStatus(username, "online")
 	log.Printf("User %s connected via WebSocket", username)
 }
 
@@ -222,7 +223,7 @@ func (s *websocketService) NotifyGroupUpdate(groupID string, updateType string, 
 	}
 }
 
-func (s *websocketService) broadcastStatus(username string, status string) {
+func (s *websocketService) BroadcastStatus(username string, status string) {
 	message := models.Message{
 		Type:   "status",
 		Sender: username,
@@ -279,7 +280,7 @@ func (s *websocketService) readPump(client *models.Client) {
 			close(client.Send) // Close Send channel here
 		}
 		if client.Username != "" {
-			s.broadcastStatus(client.Username, "offline")
+			s.BroadcastStatus(client.Username, "offline")
 		}
 		log.Printf("readPump terminated for user %s", client.Username)
 	}()
@@ -454,11 +455,7 @@ func (s *websocketService) handleChatMessage(client *models.Client, msg *models.
 }
 
 func (s *websocketService) handleTypingStatus(client *models.Client, msg *models.Message) {
-	if msg.GroupID != "" {
-		return
-	}
-
-	if msg.Receiver == "" || msg.Receiver == msg.Sender {
+	if msg.GroupID == "" && (msg.Receiver == "" || msg.Receiver == msg.Sender) {
 		return
 	}
 
@@ -471,7 +468,19 @@ func (s *websocketService) handleTypingStatus(client *models.Client, msg *models
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	if receiver, exists := s.clients[msg.Receiver]; exists {
-		s.sendMessage(receiver, messageJSON)
+	if msg.GroupID != "" {
+		if groupClients, exists := s.groups[msg.GroupID]; exists {
+			for _, c := range groupClients {
+				s.sendMessage(c, messageJSON)
+			}
+		}
+		return
+	}
+
+	if msg.Receiver != "" {
+		if receiver, exists := s.clients[msg.Receiver]; exists {
+			s.sendMessage(receiver, messageJSON)
+		}
+
 	}
 }
