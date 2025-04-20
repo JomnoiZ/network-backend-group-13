@@ -26,6 +26,7 @@ type WebsocketService interface {
 	AddToGroup(client *models.Client, groupID string)
 	KickFromGroup(username string, groupID string)
 	NotifyGroupUpdate(groupID string, updateType string, data interface{})
+	BroadcastStatus(username string, status string)
 }
 
 type websocketService struct {
@@ -120,7 +121,7 @@ func (s *websocketService) HandleConnection(username string, conn *websocket.Con
 	go s.writePump(client)
 	go s.readPump(client)
 
-	s.broadcastStatus(username, "online")
+	s.BroadcastStatus(username, "online")
 	log.Printf("User %s connected via WebSocket", username)
 }
 
@@ -222,7 +223,7 @@ func (s *websocketService) NotifyGroupUpdate(groupID string, updateType string, 
 	}
 }
 
-func (s *websocketService) broadcastStatus(username string, status string) {
+func (s *websocketService) BroadcastStatus(username string, status string) {
 	message := models.Message{
 		Type:   "status",
 		Sender: username,
@@ -279,7 +280,7 @@ func (s *websocketService) readPump(client *models.Client) {
 			close(client.Send) // Close Send channel here
 		}
 		if client.Username != "" {
-			s.broadcastStatus(client.Username, "offline")
+			s.BroadcastStatus(client.Username, "offline")
 		}
 		log.Printf("readPump terminated for user %s", client.Username)
 	}()

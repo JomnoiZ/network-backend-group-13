@@ -334,8 +334,8 @@
     <script>
       const ChatApp = (function () {
         // Constants
-        const API_BASE = "http://localhost:8080";
-        const WS_BASE = "ws://localhost:8080/ws";
+        const API_BASE = "https://9014-159-192-142-29.ngrok-free.app";
+        const WS_BASE = "wss://9014-159-192-142-29.ngrok-free.app/ws";
         const MAX_RECONNECT_ATTEMPTS = 3;
         const RECONNECT_INTERVAL = 5000;
         const USERNAME_REGEX = /^[a-z0-9]{3,20}$/;
@@ -638,6 +638,7 @@
                   showTyping(msg.sender, msg.status === "start", msg.group_id);
                   break;
                 case "status":
+                  await updateAllUsers();
                   appendStatusMessage(
                     `${sanitizeInput(msg.sender)} is ${msg.status}`,
                     "text-gray-500"
@@ -826,7 +827,6 @@
               `Registered as ${state.username}`,
               "text-green-600"
             );
-            await Promise.all([updateAllUsers(), updateGroups()]);
           } catch (err) {
             state.username = null;
             showToast(`Registration failed: ${err.message}`, true);
@@ -1726,10 +1726,10 @@
             );
             return;
           }
-          if (state.isTypingSent === isTyping) {
-            console.log("Typing status unchanged, skipping send");
-            return;
-          }
+          // if (state.isTypingSent === isTyping) {
+          //   console.log("Typing status unchanged, skipping send");
+          //   return;
+          // }
 
           if (state.socket && state.socket.readyState === WebSocket.OPEN) {
             const message = {
@@ -1742,7 +1742,6 @@
             } else {
               message.receiver = state.targetId;
             }
-            console.log("Sending typing status:", message);
             state.socket.send(JSON.stringify(message));
             state.isTypingSent = isTyping;
           } else {

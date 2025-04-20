@@ -41,7 +41,7 @@ func main() {
 
 	// Set up routes
 	routes.WebsocketRoute(websocketService, r)
-	routes.UserRoute(r, userService)
+	routes.UserRoute(r, userService, websocketService)
 	routes.GroupRoute(r, groupService)
 
 	// Serve static files under /static/
