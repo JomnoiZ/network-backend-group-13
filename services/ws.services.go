@@ -454,11 +454,7 @@ func (s *websocketService) handleChatMessage(client *models.Client, msg *models.
 }
 
 func (s *websocketService) handleTypingStatus(client *models.Client, msg *models.Message) {
-	if msg.GroupID != "" {
-		return
-	}
-
-	if msg.Receiver == "" || msg.Receiver == msg.Sender {
+	if msg.GroupID == "" && (msg.Receiver == "" || msg.Receiver == msg.Sender) {
 		return
 	}
 
@@ -471,7 +467,19 @@ func (s *websocketService) handleTypingStatus(client *models.Client, msg *models
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	if receiver, exists := s.clients[msg.Receiver]; exists {
-		s.sendMessage(receiver, messageJSON)
+	if msg.GroupID != "" {
+		if groupClients, exists := s.groups[msg.GroupID]; exists {
+			for _, c := range groupClients {
+				s.sendMessage(c, messageJSON)
+			}
+		}
+		return
+	}
+
+	if msg.Receiver != "" {
+		if receiver, exists := s.clients[msg.Receiver]; exists {
+			s.sendMessage(receiver, messageJSON)
+		}
+
 	}
 }
