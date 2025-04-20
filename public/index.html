@@ -685,7 +685,9 @@
                         elements.isGroup.checked = false;
                         elements.groupManagement.classList.add("hidden");
                         elements.messages.innerHTML = "";
-                        elements.typingUsers.clear();
+                        if (elements?.typingStatus) {
+                          elements.typingUsers.clear();
+                        }
                         elements.typingStatus.textContent = "";
                         elements.chatContext.textContent = "";
                         showToast(
