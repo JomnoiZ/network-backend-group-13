@@ -71,14 +71,13 @@ func (c *groupController) CreateGroup(ctx *gin.Context) {
 func (c *groupController) AddMember(ctx *gin.Context) {
 	groupID := ctx.Param("id")
 	var req struct {
-		Username  string `json:"username" binding:"required"`
-		Requester string `json:"requester" binding:"required"`
+		Username string `json:"username" binding:"required"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
-	err := c.groupService.AddMember(groupID, req.Username, req.Requester)
+	err := c.groupService.AddMember(groupID, req.Username)
 	if err != nil {
 		if err.Error() == "group not found" {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})

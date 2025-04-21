@@ -20,7 +20,7 @@ type GroupService interface {
 	GetAllGroups() ([]*models.Group, error)
 	GetGroup(groupID string) (*models.Group, error)
 	CreateGroup(name, owner string) (*models.Group, error)
-	AddMember(groupID, username, requester string) error
+	AddMember(groupID, username string) error
 	KickMember(groupID, username, requester string) error
 	AddAdmin(groupID, username, requester string) error
 	RemoveAdmin(groupID, username, requester string) error
@@ -72,29 +72,19 @@ func (s *groupService) CreateGroup(name, owner string) (*models.Group, error) {
 	return createdGroup, nil
 }
 
-func (s *groupService) AddMember(groupID, username, requester string) error {
+func (s *groupService) AddMember(groupID, username string) error {
 	group, err := s.groupRepository.GetGroup(groupID)
 	if err != nil || group == nil {
 		return errors.New("group not found")
 	}
-	// isMember := false
-	// for _, m := range group.Members {
-	// 	if m == requester {
-	// 		isMember = true
-	// 		break
-	// 	}
-	// }
-	// if !isMember {
-	// 	return errors.New("requester is not a group member")
-	// }
 	_, err = s.userRepository.GetUser(username)
 	if err != nil {
 		return errors.New("user not found")
 	}
 	for _, m := range group.Members {
 		if m == username {
+			// Do nothing when the user is already a member
 			return nil
-			// return errors.New("user is already a member")
 		}
 	}
 	group.Members = append(group.Members, username)
