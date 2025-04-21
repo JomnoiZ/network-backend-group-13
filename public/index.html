@@ -334,8 +334,8 @@
     <script>
       const ChatApp = (function () {
         // Constants
-        const API_BASE = "https://9014-159-192-142-29.ngrok-free.app";
-        const WS_BASE = "wss://9014-159-192-142-29.ngrok-free.app/ws";
+        const API_BASE = "https://1d87-159-192-142-29.ngrok-free.app";
+        const WS_BASE = "wss://1d87-159-192-142-29.ngrok-free.app/ws";
         const MAX_RECONNECT_ATTEMPTS = 3;
         const RECONNECT_INTERVAL = 5000;
         const USERNAME_REGEX = /^[a-z0-9]{3,20}$/;
@@ -1122,6 +1122,29 @@
 
           try {
             const res = await fetch(
+              `${API_BASE}/groups/${encodeURIComponent(groupId)}/members`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username: state.username }),
+              }
+            );
+
+            if (!res.ok) {
+              const errorData = await res.json();
+              throw new Error(
+                errorData.error || `Failed to add member (${res.status})`
+              );
+            }
+          } catch (err) {
+            showToast(`Failed to join group: ${err.message}`, true);
+            state.isProcessing = false;
+            updateUIState();
+            return;
+          }
+
+          try {
+            const res = await fetch(
               `${API_BASE}/groups/${encodeURIComponent(groupId)}`
             );
             if (!res.ok) {
@@ -1466,7 +1489,6 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   username: username,
-                  requester: state.username,
                 }),
               }
             );
