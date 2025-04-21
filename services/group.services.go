@@ -77,23 +77,24 @@ func (s *groupService) AddMember(groupID, username, requester string) error {
 	if err != nil || group == nil {
 		return errors.New("group not found")
 	}
-	isMember := false
-	for _, m := range group.Members {
-		if m == requester {
-			isMember = true
-			break
-		}
-	}
-	if !isMember {
-		return errors.New("requester is not a group member")
-	}
+	// isMember := false
+	// for _, m := range group.Members {
+	// 	if m == requester {
+	// 		isMember = true
+	// 		break
+	// 	}
+	// }
+	// if !isMember {
+	// 	return errors.New("requester is not a group member")
+	// }
 	_, err = s.userRepository.GetUser(username)
 	if err != nil {
 		return errors.New("user not found")
 	}
 	for _, m := range group.Members {
 		if m == username {
-			return errors.New("user is already a member")
+			return nil
+			// return errors.New("user is already a member")
 		}
 	}
 	group.Members = append(group.Members, username)
