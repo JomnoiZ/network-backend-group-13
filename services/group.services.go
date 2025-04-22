@@ -69,6 +69,7 @@ func (s *groupService) CreateGroup(name, owner string) (*models.Group, error) {
 		return nil, err
 	}
 	s.websocketService.AddToGroup(&models.Client{Username: owner}, group.ID)
+	s.websocketService.BroadcastGroupCreated(owner, group.ID)
 	return createdGroup, nil
 }
 

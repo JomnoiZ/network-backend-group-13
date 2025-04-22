@@ -589,6 +589,10 @@
               }
 
               switch (msg.type) {
+                case "group_created":
+                  await updateGroups();
+                  showToast(`New group is created ${msg.group_id}`);
+                  break;
                 case "message":
                   if (
                     msg.id &&
@@ -669,9 +673,12 @@
                     );
                     if (msg.group_id === state.currentGroup) {
                       if (
-                        ["add", "kick", "add_admin", "remove_admin"].includes(
-                          groupUpdateType
-                        )
+                        [
+                          "add",
+                          "kick",
+                          "admin_added",
+                          "admin_removed",
+                        ].includes(groupUpdateType)
                       ) {
                         await updateGroupMembers(true);
                       }
@@ -1062,9 +1069,7 @@
           }
 
           try {
-            const res = await fetch(
-              `${API_BASE}/users/${encodeURIComponent(state.username)}/groups`
-            );
+            const res = await fetch(`${API_BASE}/groups`);
             if (!res.ok) {
               if (res.status === 404) {
                 elements.groups.innerHTML = "<p>No groups joined.</p>";
