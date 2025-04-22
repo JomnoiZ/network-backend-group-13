@@ -27,6 +27,7 @@ type WebsocketService interface {
 	KickFromGroup(username string, groupID string)
 	NotifyGroupUpdate(groupID string, updateType string, data interface{})
 	BroadcastStatus(username string, status string)
+	BroadcastGroupCreated(username string, groupID string)
 }
 
 type websocketService struct {
@@ -221,6 +222,30 @@ func (s *websocketService) NotifyGroupUpdate(groupID string, updateType string, 
 	} else {
 		log.Printf("No clients found for group %s to notify update type %s", groupID, updateType)
 	}
+}
+
+func (s *websocketService) BroadcastGroupCreated(username string, groupID string) {
+	message := models.Message{
+		Type:    "group_created",
+		Sender:  username,
+		GroupID: groupID,
+	}
+
+	messageJSON, err := json.Marshal(message)
+	if err != nil {
+		log.Printf("Failed to marshal status message for %s: %v", groupID, err)
+		return
+	}
+
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for _, client := range s.clients {
+		if client.Username != username {
+			s.sendMessage(client, messageJSON)
+		}
+	}
+	log.Printf("Broadcasted group created for user %s for group %s", username, groupID)
 }
 
 func (s *websocketService) BroadcastStatus(username string, status string) {
